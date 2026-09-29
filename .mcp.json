@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tsl-graph": {
+      "type": "http",
+      "url": "http://localhost:5173/mcp"
+    }
+  }
+}
