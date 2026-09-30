@@ -38,7 +38,10 @@ export function NodeCard(props: NodeCardProps) {
   const kind = () => def()?.kind ?? "standard";
   const isMaterial = () => kind() === "material";
   const title = () => nodeTitle(props.doc, props.node);
-  const header = () => CATEGORY_HEADER[def()?.category ?? ""] ?? "cat-default";
+  const header = () =>
+    kind() === "placeholder"
+      ? "bg-[repeating-linear-gradient(135deg,rgba(245,158,11,0.18)_0_6px,transparent_6px_12px)]"
+      : (CATEGORY_HEADER[def()?.category ?? ""] ?? "cat-default");
   const propRows = createMemo(() => (def()?.callable ? (def()?.inputs.filter((i) => i.propertyOnly) ?? []) : []));
   const rows = createMemo(() => {
     const ins = props.inputs;
@@ -64,7 +67,8 @@ export function NodeCard(props: NodeCardProps) {
       class={[
         "flex min-w-[50px] flex-col overflow-hidden rounded-xl bg-white/95 transition-shadow duration-150 dark:bg-card/95",
         props.selected ? "shadow-xl shadow-gray-400/50 dark:shadow-black/50" : "shadow-lg shadow-gray-300/50 dark:shadow-black/30",
-        { "ring-1 ring-red-500/80": !!props.error },
+        { "ring-1 ring-red-500/80": !!props.error && kind() !== "placeholder" },
+        { "outline-dashed outline-1 outline-amber-500/70": kind() === "placeholder" },
       ]}
       title={props.error}
     >
@@ -83,7 +87,7 @@ export function NodeCard(props: NodeCardProps) {
             {title()}
           </span>
         </div>
-        <Show when={!isMaterial() || true}>
+        <Show when={kind() !== "placeholder"}>
           <button
             type="button"
             data-nodrag
@@ -263,6 +267,20 @@ function Extra(props: NodeCardProps) {
   const def = () => getNodeDef(props.node.type);
   return (
     <>
+      <Show when={def()?.kind === "placeholder" && props.node.data.placeholder}>
+        {(ph) => (
+          <div class="px-2 pt-2">
+            <div class="mb-1 text-[9px] font-semibold tracking-wider text-amber-500 uppercase">Unsupported · read-only</div>
+            <pre
+              data-nodrag
+              class="thin-scroll max-h-40 max-w-[260px] min-w-[180px] cursor-text overflow-auto rounded-md bg-black/30 px-2 py-1.5 font-mono text-[9px] leading-snug whitespace-pre-wrap text-gray-400 select-text"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {ph().meta}
+            </pre>
+          </div>
+        )}
+      </Show>
       <Show when={def()?.kind === "gradient"}>
         <div class="px-2 pt-2">
           <div

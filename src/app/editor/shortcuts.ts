@@ -1,4 +1,4 @@
-import type { Editor } from "./store";
+import { PAN_MODE_ENABLED, type Editor } from "./store";
 import { ui } from "./ui-state";
 
 interface Shortcut {
@@ -41,8 +41,12 @@ export const SHORTCUT_LIST: { key: string; label: string }[] = [
   { key: SHORTCUTS.paste.display, label: "Paste" },
   { key: "Ctrl/Cmd + D", label: "Duplicate Selection" },
   { key: SHORTCUTS.find.display, label: "Find Notes" },
-  { key: SHORTCUTS.pan.display, label: "Pan Mode" },
-  { key: SHORTCUTS.select.display, label: "Selection Mode" },
+  ...(PAN_MODE_ENABLED
+    ? [
+        { key: SHORTCUTS.pan.display, label: "Pan Mode" },
+        { key: SHORTCUTS.select.display, label: "Selection Mode" },
+      ]
+    : []),
   { key: SHORTCUTS.subgraph.display, label: "Create Subgraph" },
   { key: SHORTCUTS.codeNode.display, label: "Create Code Node" },
   { key: SHORTCUTS.loop.display, label: "Create Loop" },
@@ -101,7 +105,7 @@ export function installShortcuts(ed: Editor, toggleChat: () => void = () => {}):
     if (matches(S.redo, e) || ((e.metaKey || e.ctrlKey) && e.code === "KeyY")) return act(ed.redo);
     if (matches(S.viewCode, e)) return act(() => ui.openDialog("code"));
     if (matches(S.codeNode, e)) return act(() => ed.addNodeAt("code/tsl", ed.screenToFlow(ed.pointer().x, ed.pointer().y)));
-    if (matches(S.subgraph, e)) return act(() => ed.state.selection.nodes.length && !ed.state.subgraph && ui.openDialog("subgraph"));
+    if (matches(S.subgraph, e)) return act(() => !ed.state.subgraph && ed.createSubgraph());
     if (matches(S.copy, e)) return act(ed.copySelection);
     if (matches(S.paste, e)) return act(() => void ed.paste());
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.code === "KeyD") return act(ed.duplicateSelection);
@@ -117,8 +121,8 @@ export function installShortcuts(ed: Editor, toggleChat: () => void = () => {}):
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (matches(S.multiOp, e)) return act(ed.convertToMultiOp);
     if (matches(S.portal, e)) return act(() => ed.state.selection.edges.length && ed.edgeToPortal());
-    if (matches(S.pan, e)) return act(() => ed.setState((s) => void (s.mode = "pan")));
-    if (matches(S.select, e)) return act(() => ed.setState((s) => void (s.mode = "select")));
+    if (PAN_MODE_ENABLED && matches(S.pan, e)) return act(() => ed.setState((s) => void (s.mode = "pan")));
+    if (PAN_MODE_ENABLED && matches(S.select, e)) return act(() => ed.setState((s) => void (s.mode = "select")));
     if (matches(S.loop, e)) return act(() => ed.createLoop(ed.screenToFlow(ed.pointer().x, ed.pointer().y)));
     if (e.code === "KeyF" && !e.shiftKey) return act(() => ed.fitView(ed.state.selection.nodes.length ? [...ed.state.selection.nodes] : undefined));
     if (e.code === "Delete" || e.code === "Backspace") return act(ed.deleteSelection);

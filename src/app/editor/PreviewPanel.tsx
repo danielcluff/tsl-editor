@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onSettled, snapshot, useContext } from "solid-js";
-import { Camera, Maximize2, Minimize2, SlidersHorizontal } from "lucide-static";
-import type { GeometryKind, PreviewSettings } from "../../core/types";
+import { Camera, CircleAlert, Crosshair, Maximize2, Minimize2, SlidersHorizontal } from "lucide-static";
+import type { GeometryKind, GraphKind, PreviewSettings } from "../../core/types";
 import { resolveSettings } from "../../core/graph";
 import { ENVIRONMENTS, PreviewRenderer } from "../../runtime/preview";
 import { Button, Dialog, Icon, NumberField, Popover, Select, Slider, Switch, Tooltip, togglePopover, type PopoverAnchor } from "../ui";
@@ -182,13 +182,25 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
     a.click();
   };
 
-  const errors = () => [
+  type PreviewError = { message: string; nodeId?: string; graph?: GraphKind };
+  const errors = (): PreviewError[] => [
     ...ed
       .diagnostics()
       .filter((d) => d.level === "error" || d.message.startsWith("Post:"))
-      .map((d) => (d.graph === "post" && !d.message.startsWith("Post") ? `Post: ${d.message}` : d.message)),
-    ...ed.state.runtimeErrors,
+      .map((d) => ({
+        message: d.graph === "post" && !d.message.startsWith("Post") ? `Post: ${d.message}` : d.message,
+        nodeId: d.nodeId,
+        graph: d.graph,
+      })),
+    ...ed.state.runtimeErrors.map((message) => ({ message })),
   ];
+
+  const focusError = (e: PreviewError) => {
+    if (!e.nodeId) return;
+    // the expanded preview covers the canvas
+    if (ui.previewExpanded()) ui.setPreviewExpanded(false);
+    ed.focusNode(e.nodeId, e.graph);
+  };
 
   return (
     <div
@@ -247,8 +259,31 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
         <div class="pointer-events-none absolute top-2.5 left-2.5 font-mono text-[9px] tracking-widest text-white/40 uppercase">{backend()}</div>
       </Show>
       <Show when={errors().length}>
-        <div class="thin-scroll absolute right-2 bottom-2 left-2 max-h-[45%] overflow-y-auto rounded-md bg-red-500/85 px-2.5 py-1.5 text-[11px] leading-relaxed text-white shadow">
-          <For each={errors()}>{(e) => <div class="break-words">{e}</div>}</For>
+        <div class="thin-scroll absolute right-2 bottom-2 left-2 flex max-h-[45%] flex-col gap-1 overflow-y-auto text-[11px] leading-snug text-white">
+          <For each={errors()}>
+            {(e) => (
+              <Show
+                when={e.nodeId}
+                fallback={
+                  <div class="flex items-start gap-1.5 rounded-md bg-red-500/85 px-2.5 py-1.5 shadow">
+                    <Icon svg={CircleAlert} class="mt-px size-3 shrink-0" />
+                    <span class="min-w-0 break-words">{e.message}</span>
+                  </div>
+                }
+              >
+                <button
+                  type="button"
+                  class="group flex w-full cursor-pointer items-start gap-1.5 rounded-md bg-red-500/85 px-2.5 py-1.5 text-left shadow hover:bg-red-500"
+                  title="Show node"
+                  onClick={() => focusError(e)}
+                >
+                  <Icon svg={CircleAlert} class="mt-px size-3 shrink-0" />
+                  <span class="min-w-0 flex-1 break-words">{e.message}</span>
+                  <Icon svg={Crosshair} class="mt-px size-3 shrink-0 opacity-60 group-hover:opacity-100" />
+                </button>
+              </Show>
+            )}
+          </For>
         </div>
       </Show>
 

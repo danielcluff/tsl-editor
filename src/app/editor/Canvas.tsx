@@ -47,6 +47,12 @@ export function Canvas() {
       if (e.code === "Space") setSpaceDown(false);
     };
     el.addEventListener("wheel", wheel, { passive: false });
+    el.addEventListener("pointerdown", onPanCapture, { capture: true });
+    // no double-click actions (enter subgraph, edit code) while panning with Space
+    const blockDblClick = (e: MouseEvent) => {
+      if (spaceDown()) e.stopPropagation();
+    };
+    el.addEventListener("dblclick", blockDblClick, { capture: true });
     window.addEventListener("keydown", keydown);
     window.addEventListener("keyup", keyup);
     requestAnimationFrame(() => {
@@ -54,36 +60,54 @@ export function Canvas() {
     });
     return () => {
       el.removeEventListener("wheel", wheel);
+      el.removeEventListener("pointerdown", onPanCapture, { capture: true });
+      el.removeEventListener("dblclick", blockDblClick, { capture: true });
       window.removeEventListener("keydown", keydown);
       window.removeEventListener("keyup", keyup);
     };
   });
 
   // ---- background interactions -----------------------------------------------
+  /** Drag the viewport. A click without movement clears the selection only when it began on empty canvas. */
+  const startPan = (e: PointerEvent, clearOnClick: boolean) => {
+    e.preventDefault();
+    const start = { x: e.clientX, y: e.clientY };
+    const v0 = ed.viewport();
+    let moved = false;
+    setPanning(true);
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - start.x;
+      const dy = ev.clientY - start.y;
+      if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+      ed.setViewport({ ...v0, x: v0.x + dx, y: v0.y + dy });
+    };
+    const up = () => {
+      setPanning(false);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if (!moved && clearOnClick) ed.clearSelection();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  /**
+   * Space+drag and middle-drag pan from anywhere on the canvas. This runs in
+   * the capture phase so presses over nodes, handles and group headers pan
+   * instead of reaching their drag/connect handlers.
+   */
+  const onPanCapture = (e: PointerEvent) => {
+    if (!(e.button === 1 || (e.button === 0 && spaceDown()))) return;
+    e.stopPropagation();
+    ui.closeMenus();
+    startPan(e, !(e.target as HTMLElement).closest("[data-node-id],[data-edge-id]"));
+  };
+
   const onBackgroundDown = (e: PointerEvent) => {
     if ((e.target as HTMLElement).closest("[data-node-id],[data-edge-id],[data-ui]")) return;
     ui.closeMenus();
-    const wantPan = e.button === 1 || (e.button === 0 && ed.state.mode === "pan" && !e.shiftKey) || spaceDown();
-    if (wantPan) {
-      e.preventDefault();
-      const start = { x: e.clientX, y: e.clientY };
-      const v0 = ed.viewport();
-      let moved = false;
-      setPanning(true);
-      const move = (ev: PointerEvent) => {
-        const dx = ev.clientX - start.x;
-        const dy = ev.clientY - start.y;
-        if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
-        ed.setViewport({ ...v0, x: v0.x + dx, y: v0.y + dy });
-      };
-      const up = () => {
-        setPanning(false);
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        if (!moved) ed.clearSelection();
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
+    if (e.button === 0 && ed.state.mode === "pan" && !e.shiftKey) {
+      startPan(e, true);
       return;
     }
     if (e.button !== 0) return;
@@ -251,6 +275,14 @@ export function Canvas() {
     return { ins, outs };
   });
 
+  // Dot spacing on screen; doubles when zoomed far out so the dots don't
+  // merge into a grey wash.
+  const gridStep = () => {
+    let step = 20 * ed.viewport().zoom;
+    while (step < 10) step *= 2;
+    return step;
+  };
+
   const transform = () => {
     const v = ed.viewport();
     return `translate(${v.x}px, ${v.y}px) scale(${v.zoom})`;
@@ -262,9 +294,11 @@ export function Canvas() {
       class={[
         "graph-canvas absolute inset-0 overflow-hidden outline-none select-none",
         panning() ? "cursor-grabbing" : ed.state.mode === "pan" || spaceDown() ? "cursor-grab" : "cursor-default",
+        // while Space is held everything under the pointer pans, so show that over nodes too
+        { "[&_*]:!cursor-grab": spaceDown() && !panning(), "[&_*]:!cursor-grabbing": panning() },
       ]}
       style={{
-        "background-size": `${20 * ed.viewport().zoom}px ${20 * ed.viewport().zoom}px`,
+        "background-size": `${gridStep()}px ${gridStep()}px`,
         "background-position": `${ed.viewport().x}px ${ed.viewport().y}px`,
       }}
       tabindex="0"

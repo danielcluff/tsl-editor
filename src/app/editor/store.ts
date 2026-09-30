@@ -30,6 +30,12 @@ import type {
 import { api } from "../lib/api";
 
 export type Mode = "pan" | "select";
+/**
+ * Pan mode (left-drag on empty canvas pans, toggled with H/V) is switched off:
+ * selection mode is always active and panning uses middle-drag, Space+drag or
+ * the trackpad. Set to true to bring back the toolbar buttons and shortcuts.
+ */
+export const PAN_MODE_ENABLED = false;
 export interface Viewport {
   x: number;
   y: number;
@@ -51,7 +57,15 @@ interface HistoryEntry {
 export interface SubgraphSession {
   subgraphId: string;
   returnTo: GraphRef;
+  /** Serialized document state to restore on Cancel. */
   backup: string;
+  /** Created by "Create Subgraph" in this session: Cancel discards it entirely. */
+  isNew: boolean;
+  /** New empty subgraph: an instance is placed here in `returnTo` on save. */
+  placeInstanceAt?: XY;
+  /** Name and scope edited in the subgraph bar, applied on save. */
+  nameDraft: string;
+  scopeDraft: "project" | "library";
 }
 
 const MAX_HISTORY = 150;
@@ -73,7 +87,7 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     graph: "material" as GraphRef,
     selection: { nodes: [] as string[], edges: [] as string[] },
     viewports: {} as Record<string, Viewport>,
-    mode: "pan" as Mode,
+    mode: (PAN_MODE_ENABLED ? "pan" : "select") as Mode,
     saveState: "saved" as "saved" | "unsaved" | "saving" | "error",
     sidebarOpen: true,
     runtimeErrors: [] as string[],
@@ -300,7 +314,7 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     return l ? { w: l.w, h: l.h } : estimateSize(n);
   }
 
-  function fitView(ids?: string[], padding = 80) {
+  function fitView(ids?: string[], padding = 80, maxZoom = 1.5) {
     if (!canvasEl) return;
     const nodes = graph().nodes.filter((n) => !ids || ids.includes(n.id));
     if (!nodes.length) {
@@ -319,7 +333,7 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
       maxY = Math.max(maxY, n.position.y + s.h);
     }
     const rect = canvasEl.getBoundingClientRect();
-    const zoom = Math.min(1.5, Math.max(0.1, Math.min((rect.width - padding * 2) / (maxX - minX), (rect.height - padding * 2) / (maxY - minY))));
+    const zoom = Math.min(maxZoom, Math.max(0.1, Math.min((rect.width - padding * 2) / (maxX - minX), (rect.height - padding * 2) / (maxY - minY))));
     setViewport({
       zoom,
       x: rect.width / 2 - ((minX + maxX) / 2) * zoom,
@@ -439,8 +453,11 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
   }
 
   // ---- clipboard ------------------------------------------------------------
+  /** Imported placeholders can't be placed again, so they never enter the clipboard or copies. */
+  const placeable = (id: string) => nodesById().get(id)?.type !== "import/placeholder";
+
   function copySelection() {
-    const ids = state.selection.nodes;
+    const ids = state.selection.nodes.filter(placeable);
     if (!ids.length) return;
     const g = snapshot(graph()) as Graph;
     const set = new Set(ids);
@@ -480,7 +497,9 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     } catch {
       return;
     }
-    if (payload.kind !== "tsl-graph/clipboard" || !payload.nodes?.length) return;
+    if (payload.kind !== "tsl-graph/clipboard") return;
+    payload.nodes = (payload.nodes ?? []).filter((n) => n.type !== "import/placeholder");
+    if (!payload.nodes.length) return;
     const minX = Math.min(...payload.nodes.map((n) => n.position.x));
     const minY = Math.min(...payload.nodes.map((n) => n.position.y));
     const target = at ?? screenToFlow(pointer.x, pointer.y);
@@ -497,7 +516,7 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
   }
 
   function duplicateSelection() {
-    const ids = state.selection.nodes;
+    const ids = state.selection.nodes.filter(placeable);
     if (!ids.length) return;
     const { nodes, edges } = cloneSubset(snapshot(graph()) as Graph, [...ids], { x: 40, y: 40 });
     mutate((doc) => {
@@ -684,10 +703,18 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
   }
 
   // ---- subgraphs --------------------------------------------------------------------
-  function createSubgraphFromSelection(name: string, scope: "project" | "library" = "project"): string | null {
+  /** Move the selection into a new subgraph definition, replacing it with an instance. */
+  function createSubgraphFromSelection(name: string): { instanceId: string; subgraphId: string } | null {
     const ids = state.selection.nodes.filter((id) => {
       const k = getNodeDef(nodesById().get(id)?.type ?? "")?.kind;
-      return k !== "material" && k !== "postOutput" && k !== "postInput" && k !== "subgraphInput" && k !== "subgraphOutput";
+      return (
+        k !== "material" &&
+        k !== "postOutput" &&
+        k !== "postInput" &&
+        k !== "subgraphInput" &&
+        k !== "subgraphOutput" &&
+        k !== "placeholder"
+      );
     });
     if (!ids.length) return null;
     const g = snapshot(graph()) as Graph;
@@ -740,15 +767,73 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
       for (const e of outgoing) gr.edges.push({ id: uid("e"), source: inst.id, sourceHandle: outKey.get(`${e.source}.${e.sourceHandle}`)!, target: e.target, targetHandle: e.targetHandle });
       return inst.id;
     });
-    if (scope === "library") saveToLibrary(def);
-    select([instanceId]);
-    return instanceId;
+    return { instanceId, subgraphId: def.id };
   }
 
-  function enterSubgraph(subgraphId: string) {
+  function uniqueSubgraphName(): string {
+    const names = new Set(state.doc.customNodes.map((s) => s.name));
+    if (!names.has("Subgraph")) return "Subgraph";
+    let i = 2;
+    while (names.has(`Subgraph ${i}`)) i++;
+    return `Subgraph ${i}`;
+  }
+
+  /**
+   * "Create Subgraph": bundles the selection into a subgraph, or starts an
+   * empty one with a single input and output, then opens it for editing.
+   * Name and scope are set in the subgraph bar; Cancel discards the creation.
+   */
+  function createSubgraph() {
     if (state.subgraph) return;
+    const backup = serialize();
+    const name = uniqueSubgraphName();
+    const fromSelection = createSubgraphFromSelection(name);
+    if (fromSelection) {
+      enterSubgraph(fromSelection.subgraphId, { backup, isNew: true });
+      return;
+    }
+    const inputs = [{ key: "in_0", label: "Input 1", type: "any" }];
+    const outputs = [{ key: "out_0", label: "Output 1", type: "any" }];
+    const inAnchor = makeNode("subgraph/input", { x: 0, y: 0 }, { ports: inputs.map((p) => ({ ...p })) });
+    const outAnchor = makeNode("subgraph/output", { x: 520, y: 0 }, { ports: outputs.map((p) => ({ ...p })) });
+    const def: SubgraphDef = {
+      id: uid("sg"),
+      name,
+      graph: { nodes: [inAnchor, outAnchor], edges: [] },
+      inputs,
+      outputs,
+      scope: "project",
+    };
+    const placeInstanceAt = viewCenter();
+    mutate((doc) => void doc.customNodes.push(def));
+    enterSubgraph(def.id, { backup, isNew: true, placeInstanceAt });
+    // start on the input anchor so its port editor is open in Properties
+    select([inAnchor.id]);
+  }
+
+  function setSubgraphDraft(draft: { name?: string; scope?: "project" | "library" }) {
     setState((s) => {
-      s.subgraph = { subgraphId, returnTo: s.graph, backup: JSON.stringify(snapshot(s.doc.customNodes)) };
+      if (!s.subgraph) return;
+      if (draft.name !== undefined) s.subgraph.nameDraft = draft.name;
+      if (draft.scope !== undefined) s.subgraph.scopeDraft = draft.scope;
+    });
+  }
+
+  function enterSubgraph(subgraphId: string, opts: { backup?: string; isNew?: boolean; placeInstanceAt?: XY } = {}) {
+    if (state.subgraph) return;
+    const def = state.doc.customNodes.find((sg) => sg.id === subgraphId);
+    if (!def) return;
+    const backup = opts.backup ?? serialize();
+    setState((s) => {
+      s.subgraph = {
+        subgraphId,
+        returnTo: s.graph,
+        backup,
+        isNew: !!opts.isNew,
+        placeInstanceAt: opts.placeInstanceAt,
+        nameDraft: def.name,
+        scopeDraft: def.scope === "library" ? "library" : "project",
+      };
       s.graph = `sg:${subgraphId}`;
       s.selection = { nodes: [], edges: [] };
     });
@@ -757,36 +842,45 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
   }
 
   function exitSubgraph(saveChanges: boolean) {
-    const session = state.subgraph;
-    if (!session) return;
+    const session = { ...state.subgraph! };
+    if (!state.subgraph) return;
+    let placed: string | undefined;
     if (saveChanges) {
-      mutate((doc) => {
+      placed = mutate((doc) => {
         const sg = doc.customNodes.find((s) => s.id === session.subgraphId);
-        if (!sg) return;
+        if (!sg) return undefined;
         const inA = sg.graph.nodes.find((n) => n.type === "subgraph/input");
         const outA = sg.graph.nodes.find((n) => n.type === "subgraph/output");
         sg.inputs = (inA?.data.ports ?? []).map((p) => ({ ...p, default: sg.inputs.find((i) => i.key === p.key)?.default }));
         sg.outputs = (outA?.data.ports ?? []).map((p) => ({ ...p }));
+        sg.name = session.nameDraft.trim() || sg.name;
+        sg.scope = session.scopeDraft;
+        if (!session.placeInstanceAt) return undefined;
+        const at = session.placeInstanceAt;
+        return coreAddNode(doc, session.returnTo, "subgraph/instance", { x: at.x - 90, y: at.y - 30 }, { subgraphId: sg.id }).id;
       });
+      const saved = state.doc.customNodes.find((s) => s.id === session.subgraphId);
+      if (saved && session.scopeDraft === "library") saveToLibrary(snapshot(saved) as SubgraphDef);
     } else {
-      const backup = JSON.parse(session.backup);
-      mutate((doc) => {
-        doc.customNodes = backup;
-      });
+      // restores the whole document: a new subgraph (and the instance that
+      // replaced the selection) disappears; an existing one reverts its edits
+      restore(session.backup);
     }
     setState((s) => {
       s.graph = session.returnTo;
       s.subgraph = null;
-      s.selection = { nodes: [], edges: [] };
+      s.selection = { nodes: placed ? [placed] : [], edges: [] };
     });
     flush();
     changed();
+    requestAnimationFrame(() => fitView());
   }
 
   function insertSubgraph(def: SubgraphDef, at?: XY) {
     const existing = state.doc.customNodes.find((s) => s.id === def.id);
     const id = mutate((doc) => {
-      if (!existing) doc.customNodes.push({ ...JSON.parse(JSON.stringify(def)), scope: "project" });
+      // keeps its scope: a library subgraph edited here updates the library copy on save
+      if (!existing) doc.customNodes.push(JSON.parse(JSON.stringify(def)));
       const c = at ?? viewCenter();
       return coreAddNode(doc, state.graph, "subgraph/instance", { x: c.x - 90, y: c.y - 30 }, { subgraphId: def.id }).id;
     });
@@ -822,6 +916,29 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
       s.graph = g;
       s.selection = { nodes: [], edges: [] };
     });
+  }
+
+  /**
+   * Select a node and zoom the canvas onto it, switching to the graph (or
+   * opening the subgraph) that contains it. Returns false if it no longer exists.
+   */
+  function focusNode(nodeId: string, hint?: GraphKind): boolean {
+    const has = (g: GraphRef) => graphOf(state.doc, g).nodes.some((n) => n.id === nodeId);
+    if (!has(state.graph)) {
+      if (state.subgraph) return false; // don't leave an open editing session behind
+      const top = ([hint, "material", "post"].filter(Boolean) as GraphKind[]).find(has);
+      if (top) setGraph(top);
+      else {
+        const sg = state.doc.customNodes.find((d) => d.graph.nodes.some((n) => n.id === nodeId));
+        if (!sg) return false;
+        enterSubgraph(sg.id);
+      }
+      flush();
+    }
+    select([nodeId]);
+    // wait a frame so a freshly shown graph has measured its node sizes
+    requestAnimationFrame(() => fitView([nodeId], 160, 1.25));
+    return true;
   }
 
   const previewHooks: {
@@ -868,6 +985,7 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     screenToFlow,
     viewCenter,
     fitView,
+    focusNode,
     nodeSize,
     setGraph,
     // actions
@@ -889,7 +1007,8 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     convertToMultiOp,
     expandMultiOp,
     edgeToPortal,
-    createSubgraphFromSelection,
+    createSubgraph,
+    setSubgraphDraft,
     enterSubgraph,
     exitSubgraph,
     insertSubgraph,

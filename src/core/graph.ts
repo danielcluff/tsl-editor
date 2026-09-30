@@ -240,6 +240,12 @@ export function resolvePorts(
       }
       break;
     }
+    case "placeholder": {
+      const ph = node.data.placeholder;
+      inputs = (ph?.inputs ?? []).map((k) => ({ key: k, label: k, type: "any", connectionOnly: true }));
+      outputs = (ph?.outputs ?? []).map((k) => ({ key: k, label: k, type: "any" }));
+      break;
+    }
     case "localGet": {
       outputs = [{ key: "out", label: "Out", type: "any" }];
       break;
@@ -427,6 +433,8 @@ export function checkConnection(
         .inputs.map((i) => i.key)
         .join(", ")}`,
     };
+  if (getNodeDef(src.type)?.kind === "placeholder" || getNodeDef(tgt.type)?.kind === "placeholder")
+    return { ok: false, error: "Unsupported imported nodes can't be connected; delete or replace them" };
   if (tp.propertyOnly) return { ok: false, error: `Input "${tp.key}" is property-only and cannot be connected` };
   if (wouldCycle(g, c.source, c.target)) return { ok: false, error: "Connection would create a cycle" };
   const types = inferTypes(doc, g);
@@ -496,6 +504,7 @@ export function cloneSubset(
 export function nodeTitle(doc: ProjectDoc, node: GraphNode): string {
   if (node.data.label) return node.data.label;
   const def = getNodeDef(node.type);
+  if (def?.kind === "placeholder") return node.data.placeholder?.originalType ?? def.label;
   if (def?.kind === "subgraph") return findSubgraph(doc, node.data.subgraphId)?.name ?? "Subgraph";
   if (def?.kind === "globalRef") return findGlobal(doc, node.data.globalId)?.name ?? "Global";
   if (def?.kind === "uniform" && node.data.localName) return node.data.localName;

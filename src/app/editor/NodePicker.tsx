@@ -35,6 +35,7 @@ function PickerPanel(props: { screen: { x: number; y: number }; pending?: Picker
     let defs = allNodeDefs().filter(
       (d) =>
         d.category !== "Subgraph" &&
+        d.kind !== "placeholder" &&
         d.category !== "Loop" &&
         d.type !== "utils/group" &&
         (!d.graphs || ed.state.graph.startsWith("sg:") || d.graphs.includes(graphKind())),

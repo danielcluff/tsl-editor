@@ -29,7 +29,7 @@ describe("codegen", () => {
   });
 
   it("every catalog node compiles standalone without codegen errors", () => {
-    const skip = new Set(["loop", "loopPart", "localGet", "localSet", "globalRef", "subgraph", "subgraphInput", "portal", "assign"]);
+    const skip = new Set(["loop", "loopPart", "localGet", "localSet", "globalRef", "subgraph", "subgraphInput", "portal", "assign", "placeholder"]);
     for (const def of allNodeDefs()) {
       if (skip.has(def.kind ?? "")) continue;
       const doc = createProject("t");

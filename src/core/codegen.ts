@@ -44,7 +44,7 @@ export interface CompileResult {
 export function compileProject(doc: ProjectDoc): CompileResult {
   const diagnostics: Diagnostic[] = [];
   const utilsUsed = new Set<string>();
-  const shared = { doc, diagnostics, utilsUsed };
+  const shared: Shared = { doc, diagnostics, utilsUsed, failed: new Set() };
 
   const globalsOut = emitGlobals(doc);
   const material = compileMaterialGraph(shared, globalsOut.names);
@@ -141,11 +141,16 @@ function dedupeBlocks(lines: string[]): string[] {
 // literals
 // ---------------------------------------------------------------------------
 
+const RESERVED = new Set(
+  "break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof let new null return static super switch this throw true try typeof var void while with yield await implements interface package private protected public arguments eval".split(" "),
+);
+
 export function sanitizeIdent(name: string): string {
   const s = String(name)
     .replace(/[^a-zA-Z0-9_$]/g, "_")
     .replace(/^([0-9])/, "_$1");
-  return s || "_";
+  if (!s) return "_";
+  return RESERVED.has(s) ? `${s}_` : s;
 }
 
 function num(v: unknown): string {
@@ -260,6 +265,8 @@ interface Shared {
   doc: ProjectDoc;
   diagnostics: Diagnostic[];
   utilsUsed: Set<string>;
+  /** Nodes that failed to compile; their dependents are skipped without extra errors. */
+  failed: Set<string>;
 }
 
 interface VarInfo {
@@ -336,6 +343,8 @@ function emit(scope: Scope, line: string) {
 }
 
 class NodeError extends Error {}
+/** An input comes from a node that already failed: skip quietly, the root cause is reported once. */
+class UpstreamError extends NodeError {}
 
 const HANDLE_REMAP: Record<string, Record<string, string>> = {
   "geo/camera": { near: "x", far: "y" },
@@ -344,6 +353,7 @@ const HANDLE_REMAP: Record<string, Record<string, string>> = {
 function outputRef(scope: Scope, sourceId: string, handle: string): string {
   const v = scope.vars.get(sourceId);
   if (!v) {
+    if (scope.shared.failed.has(sourceId)) throw new UpstreamError("upstream node failed");
     const src = scope.graph.nodes.find((n) => n.id === sourceId);
     throw new NodeError(`Input from "${src ? getNodeDef(src.type)?.label ?? src.type : sourceId}" is not available`);
   }
@@ -479,6 +489,8 @@ function compileOne(scope: Scope, node: GraphNode, def: NodeDef) {
     compileNode(scope, node, def);
   } catch (err) {
     scope.lines.length = before;
+    scope.shared.failed.add(node.id);
+    if (err instanceof UpstreamError) return;
     const message = err instanceof Error ? err.message : String(err);
     scope.shared.diagnostics.push({
       level: "error",
@@ -676,6 +688,10 @@ function compileNode(scope: Scope, node: GraphNode, def: NodeDef) {
       scope.vars.set(node.id, { name: "_in", handles: scope.params });
       return;
     }
+    case "placeholder":
+      throw new NodeError(
+        `Unsupported imported node "${node.data.placeholder?.originalType ?? node.type}" — delete it or replace it with a supported node`,
+      );
     case "portal": {
       const own = incomingEdge(scope, node.id, "in");
       if (own) {
@@ -864,6 +880,13 @@ function compileCodeNode(scope: Scope, node: GraphNode) {
   }
   const params = ins.map((i) => i.key).join(", ");
   const args = ins.map((i) => i.expr).join(", ");
+  // A syntax error would break the whole generated module, so reject it here
+  // and keep the rest of the graph compiling.
+  try {
+    new Function(...ins.map((i) => i.key), code.source);
+  } catch (err) {
+    throw new NodeError(`Syntax error in code: ${err instanceof Error ? err.message : String(err)}`);
+  }
   declare(scope, node, `((${params}) => {\n${indentBlock(code.source, "  ")}\n})(${args})`, { single });
 }
 
@@ -1000,12 +1023,13 @@ function compileMaterialGraph(shared: Shared, globals: Record<string, string>): 
       }
       ok = true;
     } catch (err) {
-      shared.diagnostics.push({
-        level: "error",
-        message: `${def.label}: ${err instanceof Error ? err.message : String(err)}`,
-        nodeId: m.id,
-        graph: "material",
-      });
+      if (!(err instanceof UpstreamError))
+        shared.diagnostics.push({
+          level: "error",
+          message: `${def.label}: ${err instanceof Error ? err.message : String(err)}`,
+          nodeId: m.id,
+          graph: "material",
+        });
     }
   }
   return {
@@ -1060,12 +1084,13 @@ function compilePostGraph(
     outputExpr = outputRef(scope, edge.source, edge.sourceHandle);
   } catch (err) {
     ok = false;
-    shared.diagnostics.push({
-      level: "error",
-      message: `Post Output: ${err instanceof Error ? err.message : String(err)}`,
-      nodeId: outNode?.id,
-      graph: "post",
-    });
+    if (!(err instanceof UpstreamError))
+      shared.diagnostics.push({
+        level: "error",
+        message: `Post Output: ${err instanceof Error ? err.message : String(err)}`,
+        nodeId: outNode?.id,
+        graph: "post",
+      });
   }
   return {
     lines: scope.lines,

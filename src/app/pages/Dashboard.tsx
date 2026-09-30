@@ -15,6 +15,7 @@ import {
 } from "lucide-static";
 import type { ProjectDoc, ProjectSummary } from "../../core/types";
 import { TEMPLATES, projectFromTemplate } from "../../core/templates";
+import { importTslGraph, isTslGraphExport, summarizeImport } from "../../core/import-tslgraph";
 import { api } from "../lib/api";
 import { A, navigate } from "../lib/router";
 import { signOut, user } from "../lib/session";
@@ -86,9 +87,28 @@ export function Dashboard() {
       const file = input.files?.[0];
       if (!file) return;
       try {
-        const doc = JSON.parse(await file.text()) as ProjectDoc;
-        if (!doc.graphs?.material) throw new Error("Not a TSL Graph project file");
-        const saved = await api.create(doc.name ?? file.name.replace(/\.json$/, ""), doc);
+        const json = JSON.parse(await file.text());
+        const fallbackName = file.name.replace(/\.json$/i, "");
+        let doc: ProjectDoc;
+        let summary: string | null = null;
+        if (isTslGraphExport(json)) {
+          // export from tsl-graph.xyz
+          const result = importTslGraph(json, fallbackName);
+          doc = result.doc;
+          summary = summarizeImport(result.report);
+        } else if ((json as ProjectDoc).graphs?.material) {
+          doc = json as ProjectDoc;
+        } else {
+          throw new Error("Not a TSL Graph project file");
+        }
+        const saved = await api.create(doc.name ?? fallbackName, doc);
+        if (summary) {
+          try {
+            sessionStorage.setItem(`tsl-import-summary-${saved.id}`, summary);
+          } catch {
+            // the summary is a nicety
+          }
+        }
         navigate(`/editor/${saved.id}`);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));

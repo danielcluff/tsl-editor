@@ -236,6 +236,9 @@ function Properties() {
     <SwitchFlow
       fallback={<div class="flex h-full min-h-40 items-center justify-center p-6 text-center text-sm text-muted-foreground">Select a node to edit properties</div>}
     >
+      <Match when={ed.selectedNode()?.type === "import/placeholder" && ed.selectedNode()}>
+        {(node) => <PlaceholderProperties node={node()} />}
+      </Match>
       <Match when={ed.selectedNode()}>{(node) => <NodeProperties node={node()} />}</Match>
       <Match when={ed.state.selection.nodes.length > 1}>
         <div class="flex flex-col gap-3 p-4">
@@ -244,7 +247,7 @@ function Properties() {
             <Button size="xs" variant="outline" onClick={() => ed.groupSelection()}>
               Group
             </Button>
-            <Button size="xs" variant="outline" onClick={() => ui.openDialog("subgraph")}>
+            <Button size="xs" variant="outline" onClick={() => ed.createSubgraph()}>
               <Icon svg={Layers} class="size-3" /> Create Subgraph
             </Button>
             <Button size="xs" variant="outline" onClick={() => ed.convertToMultiOp()}>
@@ -270,6 +273,42 @@ function Properties() {
         </div>
       </Match>
     </SwitchFlow>
+  );
+}
+
+/** Imported node this editor doesn't support: read-only details, delete only. */
+function PlaceholderProperties(props: { node: GraphNode }) {
+  const ed = useContext(EditorContext);
+  const ph = () => props.node.data.placeholder;
+  return (
+    <div>
+      <div class="border-b px-3 py-3">
+        <div class="text-sm font-semibold">{ph()?.originalType ?? "Unsupported node"}</div>
+        <div class="mt-0.5 font-mono text-[10px] text-muted-foreground">{ph()?.originalId}</div>
+        <div class="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-300">
+          <div class="font-medium">Unsupported imported node</div>
+          <div>{ph()?.reason}.</div>
+          <div class="mt-1 text-amber-300/80">
+            It can't be edited, copied or connected. Delete it, or rebuild it with supported nodes using the details below.
+          </div>
+        </div>
+      </div>
+      <Section title="Imported data">
+        <pre class="thin-scroll max-h-80 overflow-auto rounded-md border bg-muted/40 px-2.5 py-2 font-mono text-[10px] leading-snug whitespace-pre-wrap select-text">
+          {ph()?.meta}
+        </pre>
+        <Show when={(ph()?.inputs.length ?? 0) + (ph()?.outputs.length ?? 0) > 0}>
+          <div class="text-[10px] text-muted-foreground">
+            Connections kept for reference — inputs: {ph()?.inputs.join(", ") || "none"} · outputs: {ph()?.outputs.join(", ") || "none"}
+          </div>
+        </Show>
+      </Section>
+      <div class="border-t px-3 py-3">
+        <Button size="xs" variant="destructive" onClick={() => ed.deleteSelection()}>
+          <Icon svg={Trash2} class="size-3" /> Delete node
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -551,6 +590,8 @@ function NodeProperties(props: { node: GraphNode }) {
         </Match>
       </SwitchFlow>
 
+      {/* subgraph anchors can't be duplicated or deleted */}
+      <Show when={kind() !== "subgraphInput" && kind() !== "subgraphOutput"}>
       <div class="flex flex-wrap gap-2 border-t px-3 py-3">
         <Button size="xs" variant="outline" onClick={() => ed.duplicateSelection()}>
           Duplicate
@@ -559,6 +600,7 @@ function NodeProperties(props: { node: GraphNode }) {
           <Icon svg={Trash2} class="size-3" /> Delete
         </Button>
       </div>
+      </Show>
     </div>
   );
 }

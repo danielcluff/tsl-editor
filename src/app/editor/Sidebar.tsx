@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, useContext } from "solid-js";
-import { ChevronDown, ChevronRight, PanelLeftOpen, Search, Trash2, X } from "lucide-static";
+import { ChevronDown, ChevronRight, PanelLeftOpen, Plus, Search, Trash2, X } from "lucide-static";
 import { libraryCategories } from "../../core/registry";
 import type { GraphKind, NodeDef, SubgraphDef } from "../../core/types";
 import { Icon, Tabs, Tooltip } from "../ui";
@@ -155,6 +155,15 @@ export function Sidebar() {
                     { value: "community", label: "Community" },
                   ]}
                 />
+                <Show when={customTab() !== "community" && !ed.state.subgraph}>
+                  <button
+                    type="button"
+                    class="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed py-1.5 text-[11px] text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+                    onClick={() => ed.createSubgraph()}
+                  >
+                    <Icon svg={Plus} class="size-3" /> New subgraph
+                  </button>
+                </Show>
                 <div class="mt-2">
                   <Show
                     when={customNodes().length}
@@ -162,7 +171,7 @@ export function Sidebar() {
                       <p class="px-1 py-2 text-[11px] leading-relaxed text-muted-foreground">
                         {customTab() === "community"
                           ? "Community sharing is not available in the local build."
-                          : 'Select nodes and press Ctrl/Cmd + Alt + S to create a subgraph. Choose "Library" to reuse it across projects.'}
+                          : 'Create a subgraph from selected nodes, or start an empty one. Choose "Library" in the subgraph bar to reuse it across projects.'}
                       </p>
                     }
                   >

@@ -34,7 +34,7 @@ import { getNodeDef } from "../../core/registry";
 import { A } from "../lib/router";
 import { Icon, MenuItem, MenuLabel, MenuSeparator, Popover, Tooltip, togglePopover, type PopoverAnchor } from "../ui";
 import { Logo } from "../pages/shared";
-import { EditorContext } from "./store";
+import { EditorContext, PAN_MODE_ENABLED } from "./store";
 import { ChatContext } from "./ai-chat";
 import { ui } from "./ui-state";
 import { SHORTCUTS } from "./shortcuts";
@@ -50,7 +50,7 @@ export function TopBar(props: { embed?: boolean; onSaveJson: () => void; onLoadJ
     ed.state.subgraph ? ed.state.doc.customNodes.find((s) => s.id === ed.state.subgraph!.subgraphId) : undefined,
   );
   return (
-    <div class="absolute top-0 right-0 left-0 z-20 flex h-10 items-center gap-3 border-b bg-card/90 px-3 backdrop-blur" data-ui>
+    <div class="@container absolute top-0 right-0 left-0 z-20 flex h-10 items-center gap-3 border-b bg-card/90 px-3 backdrop-blur" data-ui>
       <A href="/dashboard" aria-label="Go to dashboard" class="shrink-0">
         <Logo />
       </A>
@@ -59,9 +59,32 @@ export function TopBar(props: { embed?: boolean; onSaveJson: () => void; onLoadJ
         when={!ed.state.subgraph}
         fallback={
           <div class="flex min-w-0 items-center gap-2 text-xs">
-            <Icon svg={Layers} class="size-3.5 text-blue-400" />
-            <span class="text-muted-foreground">Editing subgraph</span>
-            <span class="truncate font-medium">{sg()?.name}</span>
+            <span class="shrink-0" title="Editing subgraph">
+              <Icon svg={Layers} class="size-3.5 text-blue-400" />
+            </span>
+            {/* the label only shows when the bar is wide enough to keep the name readable */}
+            <span class="hidden shrink-0 whitespace-nowrap text-muted-foreground @xl:inline">Editing subgraph</span>
+            <input
+              aria-label="Subgraph name"
+              placeholder="Subgraph Name"
+              class="h-7 w-36 min-w-24 rounded-md border border-transparent bg-transparent px-1.5 text-xs font-medium outline-none hover:border-border focus:border-border focus:bg-background"
+              value={ed.state.subgraph?.nameDraft ?? sg()?.name ?? ""}
+              onInput={(e) => ed.setSubgraphDraft({ name: e.currentTarget.value })}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
+            />
+            <select
+              aria-label="Scope"
+              title="Scope: Project = only in this project. Library = available in all your projects."
+              class="h-7 shrink-0 rounded-md border border-border bg-background/60 px-1.5 text-xs text-foreground outline-none"
+              value={ed.state.subgraph?.scopeDraft ?? "project"}
+              onChange={(e) => ed.setSubgraphDraft({ scope: e.currentTarget.value as "project" | "library" })}
+            >
+              <option value="project">Project</option>
+              <option value="library">Library</option>
+            </select>
           </div>
         }
       >
@@ -93,22 +116,6 @@ export function TopBar(props: { embed?: boolean; onSaveJson: () => void; onLoadJ
         </div>
       </Show>
       <div class="flex-1" />
-      <Show when={ed.state.subgraph}>
-        <button
-          type="button"
-          class="rounded-md px-2.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={() => ed.exitSubgraph(false)}
-        >
-          Cancel <span class="opacity-60">(Esc)</span>
-        </button>
-        <button
-          type="button"
-          class="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-500"
-          onClick={() => ed.exitSubgraph(true)}
-        >
-          Save & Exit <span class="opacity-70">(Ctrl+Enter)</span>
-        </button>
-      </Show>
       <SaveBadge />
       <Show when={!props.embed}>
         <Tooltip content="Share Project" side="bottom">
@@ -212,20 +219,22 @@ export function Toolbar() {
   const chat = useContext(ChatContext);
   const k = (name: keyof typeof SHORTCUTS) => SHORTCUTS[name].display;
   return (
+    <Show when={!ed.state.subgraph} fallback={<SubgraphBar />}>
     <div class="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border bg-card/95 p-1 shadow-lg backdrop-blur" data-ui>
-      <ToolButton icon={Hand} label={`Pan Mode (${k("pan")})`} active={ed.state.mode === "pan"} onClick={() => ed.setState((s) => void (s.mode = "pan"))} />
-      <ToolButton
-        icon={MousePointer2}
-        label={`Selection Mode (${k("select")})`}
-        active={ed.state.mode === "select"}
-        onClick={() => ed.setState((s) => void (s.mode = "select"))}
-      />
-      <div class="mx-1 h-5 w-px bg-border" />
+      <Show when={PAN_MODE_ENABLED}>
+        <ToolButton icon={Hand} label={`Pan Mode (${k("pan")})`} active={ed.state.mode === "pan"} onClick={() => ed.setState((s) => void (s.mode = "pan"))} />
+        <ToolButton
+          icon={MousePointer2}
+          label={`Selection Mode (${k("select")})`}
+          active={ed.state.mode === "select"}
+          onClick={() => ed.setState((s) => void (s.mode = "select"))}
+        />
+        <div class="mx-1 h-5 w-px bg-border" />
+      </Show>
       <ToolButton
         icon={Layers}
         label={`Create Subgraph (${k("subgraph")})`}
-        disabled={!ed.state.selection.nodes.length || !!ed.state.subgraph}
-        onClick={() => ui.openDialog("subgraph")}
+        onClick={() => ed.createSubgraph()}
       />
       <ToolButton icon={FileCode2} label={`Create Code Node (${k("codeNode")})`} onClick={() => ed.addNodeAt("code/tsl")} />
       <ToolButton icon={Repeat} label={`Create Loop (${k("loop")})`} onClick={() => ed.createLoop()} />
@@ -250,6 +259,51 @@ export function Toolbar() {
         }
       />
     </div>
+    </Show>
+  );
+}
+
+/**
+ * Replaces the toolbar while a subgraph is open: the tools that make sense
+ * inside it, and Save & Exit / Cancel. (Name and scope are in the top bar.)
+ */
+function SubgraphBar() {
+  const ed = useContext(EditorContext);
+  const k = (name: keyof typeof SHORTCUTS) => SHORTCUTS[name].display;
+  const session = () => ed.state.subgraph!;
+  return (
+    <form
+      class="thin-scroll absolute bottom-3 left-1/2 z-20 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-xl border-2 border-blue-500/70 bg-card/95 p-1.5 shadow-lg backdrop-blur"
+      data-ui
+      onSubmit={(e) => {
+        e.preventDefault();
+        ed.exitSubgraph(true);
+      }}
+    >
+      <Icon svg={Layers} class="mx-1 size-4 shrink-0 text-blue-400" />
+      <ToolButton icon={FileCode2} label={`Create Code Node (${k("codeNode")})`} onClick={() => ed.addNodeAt("code/tsl")} />
+      <ToolButton icon={Repeat} label={`Create Loop (${k("loop")})`} onClick={() => ed.createLoop()} />
+      <ToolButton icon={Group} label={`Group Nodes (${k("group")})`} disabled={!ed.state.selection.nodes.length} onClick={() => ed.groupSelection()} />
+      <div class="mx-1 h-5 w-px bg-border" />
+      <ToolButton icon={Undo2} label={`Undo (${k("undo")})`} disabled={!ed.state.canUndo} onClick={() => ed.undo()} />
+      <ToolButton icon={Redo2} label={`Redo (${k("redo")})`} disabled={!ed.state.canRedo} onClick={() => ed.redo()} />
+      <ToolButton icon={Scan} label="Fit View" onClick={() => ed.fitView()} />
+      <div class="mx-1 h-5 w-px bg-border" />
+      <Tooltip content={session().isNew ? "Discard this new subgraph (Esc)" : "Discard changes (Esc)"} side="top">
+        <button
+          type="button"
+          class="h-7 shrink-0 rounded-md px-2.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+          onClick={() => ed.exitSubgraph(false)}
+        >
+          Cancel
+        </button>
+      </Tooltip>
+      <Tooltip content={`Save & Exit (${k("saveSubgraph")})`} side="top">
+        <button type="submit" class="h-7 shrink-0 rounded-md bg-blue-600 px-3 text-xs font-medium whitespace-nowrap text-white hover:bg-blue-500">
+          Save & Exit
+        </button>
+      </Tooltip>
+    </form>
   );
 }
 
@@ -327,7 +381,7 @@ export function ContextMenu() {
               </MenuItem>
             </Show>
             <Show when={!ed.state.subgraph}>
-              <MenuItem icon={Layers} shortcut={SHORTCUTS.subgraph.display} onSelect={run(() => ui.openDialog("subgraph"))}>
+              <MenuItem icon={Layers} shortcut={SHORTCUTS.subgraph.display} onSelect={run(() => ed.createSubgraph())}>
                 Create Subgraph
               </MenuItem>
             </Show>

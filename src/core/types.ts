@@ -72,7 +72,9 @@ export type NodeKind =
   | "postScene"
   | "textureSample"
   | "gradient"
-  | "portal";
+  | "portal"
+  /** Stand-in for an imported node type this editor does not support. */
+  | "placeholder";
 
 export interface NodeDef {
   type: string;
@@ -147,6 +149,19 @@ export interface NodeData {
   stops?: GradientStop[];
   /** Subgraph input/output anchor ports. */
   ports?: { key: string; label: string; type: string }[];
+  /** Placeholder nodes: what was imported, shown read-only. */
+  placeholder?: PlaceholderInfo;
+}
+
+export interface PlaceholderInfo {
+  originalType: string;
+  originalId: string;
+  reason: string;
+  /** Input/output handle names the imported edges used, so connections stay visible. */
+  inputs: string[];
+  outputs: string[];
+  /** Everything known about the node, pretty-printed. */
+  meta: string;
 }
 
 export interface GradientStop {

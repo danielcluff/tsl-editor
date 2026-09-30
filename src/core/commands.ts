@@ -126,6 +126,8 @@ export function executeCommand(doc: ProjectDoc, cmd: Command, refs: Refs = new M
           `Unknown node type "${cmd.type}".${suggestions.length ? ` Did you mean: ${suggestions.join(", ")}?` : ""}`,
         );
       }
+      if (def.kind === "placeholder")
+        throw new CommandError("Placeholder nodes only come from imports and can't be added");
       if (def.graphs && !graph.startsWith("sg:") && !def.graphs.includes(graph as GraphKind))
         throw new CommandError(`"${cmd.type}" can only be used in the ${def.graphs.join("/")} graph`);
       const node = addNode(doc, graph, cmd.type, cmd.position ?? nextPosition(doc, graph), {
@@ -178,6 +180,10 @@ export function executeCommand(doc: ProjectDoc, cmd: Command, refs: Refs = new M
       const id = resolveRef(refs, cmd.nodeId);
       const node = graphOf(doc, graph).nodes.find((n) => n.id === id);
       if (!node) throw new CommandError(`Node "${id}" not found in ${graph} graph`);
+      if (getNodeDef(node.type)?.kind === "placeholder") {
+        const onlyMoves = Object.keys(cmd).every((k) => ["op", "graph", "nodeId", "position"].includes(k));
+        if (!onlyMoves) throw new CommandError("Unsupported imported nodes are read-only; delete them or replace them");
+      }
       if (cmd.values) for (const [k, v] of Object.entries(cmd.values)) node.data.values[k] = v;
       if (cmd.activeInputs) node.data.activeInputs = [...cmd.activeInputs];
       if (cmd.label !== undefined) node.data.label = cmd.label || undefined;
@@ -407,7 +413,7 @@ const NODE_NOTES: Record<string, string> = {
 export function listNodeTypes(filter: { category?: string; search?: string; graph?: GraphRef } = {}) {
   const q = filter.search?.toLowerCase().trim();
   return allNodeDefs()
-    .filter((d) => d.category !== "Subgraph" && d.type !== "subgraph/instance")
+    .filter((d) => d.category !== "Subgraph" && d.type !== "subgraph/instance" && d.kind !== "placeholder")
     .filter((d) => !filter.category || d.category.toLowerCase() === filter.category.toLowerCase())
     .filter((d) => !filter.graph || !d.graphs || filter.graph.startsWith("sg:") || d.graphs.includes(filter.graph as GraphKind))
     .filter(

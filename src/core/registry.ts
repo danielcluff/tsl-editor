@@ -269,6 +269,15 @@ const structuralNodes: NodeDef[] = [
     outputs: [],
   },
   {
+    type: "import/placeholder",
+    label: "Unsupported Node",
+    category: "Imported",
+    description: "An imported node this editor doesn't support. It can't be edited or connected; delete it or replace it with a supported node.",
+    kind: "placeholder",
+    inputs: [],
+    outputs: [],
+  },
+  {
     type: "utils/portal",
     label: "Portal",
     category: "Utils",

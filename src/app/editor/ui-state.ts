@@ -10,7 +10,7 @@ export interface PickerState {
 
 export type ContextTarget = { kind: "canvas" } | { kind: "node"; id: string } | { kind: "edge"; id: string };
 
-export type DialogName = "code" | "help" | "export" | "subgraph" | "clear" | "share" | "mcp" | null;
+export type DialogName = "code" | "help" | "export" | "clear" | "share" | "mcp" | null;
 
 export interface Toast {
   id: number;

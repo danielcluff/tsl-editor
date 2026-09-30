@@ -20,7 +20,6 @@ export function Dialogs(props: { persist: boolean }) {
       <CodeNodeDialog />
       <HelpDialog />
       <ImageExportDialog />
-      <SubgraphDialog />
       <ClearDialog />
       <ShareDialog persist={props.persist} />
       <McpDialog open={ui.dialog() === "mcp"} onClose={ui.closeDialog} />
@@ -284,13 +283,21 @@ function Guide() {
       </p>
       <H>Subgraphs</H>
       <p>
-        <b>1. Creating a Subgraph:</b> select nodes (<b>Shift + Click</b> or <b>Shift + Drag</b>) and press <b>Create Subgraph</b>. Wires
-        crossing the selection become the subgraph's inputs and outputs. Choose <b>Project</b> to keep it in this project, or{" "}
-        <b>Library</b> to reuse it in every project (Custom Nodes → Library).
+        <b>1. Creating a Subgraph:</b> click <b>Create Subgraph</b> (Layers icon) in the bottom toolbar. With nodes selected (
+        <b>Shift + Click</b> or <b>Shift + Drag</b>) they move into the subgraph and the wires crossing the selection become its inputs and
+        outputs. With nothing selected you start from an empty subgraph with one input and one output. Either way the subgraph opens for
+        editing.
       </p>
       <p>
-        <b>2. Editing:</b> double-click a subgraph node. The <b>Subgraph Input</b> and <b>Subgraph Output</b> anchor nodes define its
-        ports — manage them in Properties. Save & Exit with Ctrl/Cmd + Enter.
+        <b>2. Name, scope and ports:</b> while editing, the bottom bar holds the subgraph's <b>name</b> and <b>scope</b> — <b>Project</b>{" "}
+        keeps it in this project, <b>Library</b> makes it available in every project (Custom Nodes → Library). Select the{" "}
+        <b>Subgraph Input</b> or <b>Subgraph Output</b> anchor node to add, rename, retype or remove ports in Properties, then build the
+        logic between them.
+      </p>
+      <p>
+        <b>3. Save:</b> <b>Save & Exit</b> (Ctrl/Cmd + Enter) returns to your graph; a new empty subgraph is placed there as a node.{" "}
+        <b>Cancel</b> (Esc) discards a new subgraph, or reverts your edits to an existing one. Double-click a subgraph node (or use Edit
+        Subgraph in Properties) to edit it again.
       </p>
       <p>
         Think of it as a function definition: the input anchor holds the parameters <code>(a, b)</code>, the output anchor the{" "}
@@ -560,55 +567,6 @@ function ImageExportDialog() {
 }
 
 // ---------------------------------------------------------------------------
-
-function SubgraphDialog() {
-  const ed = useContext(EditorContext);
-  const [name, setName] = createSignal("");
-  const [scope, setScope] = createSignal<"project" | "library">("project");
-  const submit = () => {
-    const id = ed.createSubgraphFromSelection(name().trim() || "Subgraph", scope());
-    if (!id) ui.toast("Select at least one node that can go in a subgraph", "error");
-    setName("");
-    ui.closeDialog();
-  };
-  return (
-    <Dialog
-      open={ui.dialog() === "subgraph"}
-      onClose={ui.closeDialog}
-      title="Create Subgraph"
-      description={`${ed.state.selection.nodes.length} selected node(s) will be collapsed into a reusable node.`}
-    >
-      <form
-        class="flex flex-col gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
-        }}
-      >
-        <Input placeholder="Subgraph Name" value={name()} onInput={(e) => setName(e.currentTarget.value)} autofocus />
-        <Tabs
-          value={scope()}
-          onChange={setScope}
-          tabs={[
-            { value: "project", label: "Project" },
-            { value: "library", label: "Library" },
-          ]}
-        />
-        <p class="text-xs text-muted-foreground">
-          {scope() === "project"
-            ? "Saved in this project under Custom Nodes → Project."
-            : 'Also saved to your browser library under "Custom Nodes" for easy reuse.'}
-        </p>
-        <div class="flex justify-end gap-2">
-          <Button variant="outline" onClick={ui.closeDialog}>
-            Cancel
-          </Button>
-          <Button type="submit">Create</Button>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
 
 function ClearDialog() {
   const ed = useContext(EditorContext);

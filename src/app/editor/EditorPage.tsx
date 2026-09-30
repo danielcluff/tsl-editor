@@ -1,5 +1,6 @@
 import { Show, createSignal, onSettled, snapshot, untrack } from "solid-js";
 import { projectFromTemplate } from "../../core/templates";
+import { importTslGraph, isTslGraphExport, summarizeImport } from "../../core/import-tslgraph";
 import type { ProjectDoc } from "../../core/types";
 import { api } from "../lib/api";
 import { navigate, search } from "../lib/router";
@@ -75,6 +76,16 @@ function EditorShell(props: { doc: ProjectDoc; persist: boolean; embed: boolean 
 
   onSettled(() => {
     ed.compileNow();
+    try {
+      const key = `tsl-import-summary-${ed.state.doc.id}`;
+      const summary = sessionStorage.getItem(key);
+      if (summary) {
+        sessionStorage.removeItem(key);
+        setTimeout(() => ui.toast(summary, summary.includes("unsupported") || summary.includes("dropped") ? "info" : "success"), 600);
+      }
+    } catch {
+      // ignore
+    }
     const offKeys = installShortcuts(ed, () =>
       chat.setState((d) => {
         d.open = !(d.open && !d.minimized);
@@ -135,13 +146,24 @@ function EditorShell(props: { doc: ProjectDoc; persist: boolean; embed: boolean 
       const file = input.files?.[0];
       if (!file) return;
       try {
-        const data = JSON.parse(await file.text()) as ProjectDoc;
-        if (!data.graphs?.material) throw new Error("Not a TSL Graph project file");
+        const json = JSON.parse(await file.text());
+        let data: ProjectDoc;
+        let summary = "Project loaded";
+        if (isTslGraphExport(json)) {
+          // export from tsl-graph.xyz
+          const result = importTslGraph(json, ed.state.doc.name);
+          data = result.doc;
+          summary = summarizeImport(result.report);
+        } else if ((json as ProjectDoc).graphs?.material) {
+          data = json as ProjectDoc;
+        } else {
+          throw new Error("Not a TSL Graph project file");
+        }
         const next: ProjectDoc = { ...snapshot(ed.state.doc), graphs: data.graphs, globals: data.globals ?? [], customNodes: data.customNodes ?? [], settings: { ...ed.state.doc.settings, ...data.settings } } as ProjectDoc;
         ed.replaceDoc(next, { history: true });
         ed.mutate(() => {}, { history: false });
         requestAnimationFrame(() => ed.fitView());
-        ui.toast("Project loaded", "success");
+        ui.toast(summary, summary.includes("unsupported") || summary.includes("dropped") ? "info" : "success");
       } catch (err) {
         ui.toast(err instanceof Error ? err.message : String(err), "error");
       }
