@@ -49,11 +49,11 @@ export function Sidebar() {
     <Show
       when={ed.state.sidebarOpen}
       fallback={
-        <div class="absolute top-2 left-2 z-20" data-ui>
+        <div class="absolute top-0 left-0 z-20" data-ui>
           <Tooltip content="Show nodes" side="right">
             <button
               type="button"
-              class="flex size-9 items-center justify-center rounded-lg border bg-card text-muted-foreground shadow-sm hover:text-foreground"
+              class="flex size-10 items-center justify-center rounded-xl border bg-sidebar text-muted-foreground shadow-lg hover:text-foreground"
               onClick={() => ed.setState((s) => void (s.sidebarOpen = true))}
               aria-label="Show nodes"
             >
@@ -63,23 +63,23 @@ export function Sidebar() {
         </div>
       }
     >
-      <aside class="flex h-full w-[208px] shrink-0 flex-col rounded-lg border bg-card" data-ui>
-        <div class="flex items-center justify-between px-3 pt-3 pb-2">
-          <span class="text-sm font-semibold">Nodes</span>
+      <aside class="flex h-full w-52 shrink-0 flex-col overflow-hidden rounded-xl border bg-sidebar shadow-lg" data-ui>
+        <div class="shrink-0 space-y-2 border-b px-3 py-2">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-semibold">Nodes</h2>
           <button
             type="button"
             aria-label="Hide nodes"
-            class="text-muted-foreground hover:text-foreground"
+            class="rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             onClick={() => ed.setState((s) => void (s.sidebarOpen = false))}
           >
             <Icon svg={X} class="size-4" />
           </button>
         </div>
-        <div class="px-2 pb-2">
           <div class="relative">
-            <Icon svg={Search} class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Icon svg={Search} class="pointer-events-none absolute top-2.5 left-2 size-3.5 text-muted-foreground/70" />
             <input
-              class="h-8 w-full rounded-md border border-input bg-transparent pr-2 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40 dark:bg-input/30"
+              class="h-8 w-full rounded-md border border-input bg-transparent pr-3 pl-7 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40 dark:bg-input/30"
               placeholder="Search..."
               value={query()}
               onInput={(e) => setQuery(e.currentTarget.value)}
@@ -93,18 +93,20 @@ export function Sidebar() {
             />
           </div>
         </div>
-        <div class="thin-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        <div class="thin-scroll min-h-0 flex-1 overflow-y-auto px-2 py-0 pb-3">
           <For each={categories()}>
             {(cat) => (
               <div>
                 <button
                   type="button"
-                  class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  class="group/label flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-foreground/70 hover:text-foreground"
                   onClick={() => toggle(cat.name)}
                 >
-                  <span class="flex-1 truncate">{cat.name}</span>
-                  <span class="rounded-md bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground">{cat.nodes.length}</span>
-                  <Icon svg={isOpen(cat.name) ? ChevronDown : ChevronRight} class="size-3.5 text-muted-foreground" />
+                  <span class="truncate">{cat.name}</span>
+                  <span class="inline-flex items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[10px] leading-none font-medium text-muted-foreground">
+                    {cat.nodes.length}
+                  </span>
+                  <Icon svg={isOpen(cat.name) ? ChevronDown : ChevronRight} class="ml-auto size-3.5 shrink-0 text-muted-foreground/70" />
                 </button>
                 <Show when={isOpen(cat.name)}>
                   <div class="mb-1">
@@ -134,14 +136,14 @@ export function Sidebar() {
           <div>
             <button
               type="button"
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
+              class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-foreground/70 hover:text-foreground"
               onClick={() => toggle("__custom")}
             >
-              <span class="flex-1">Custom Nodes</span>
-              <span class="rounded-md bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground">
+              <span class="truncate">Custom Nodes</span>
+              <span class="inline-flex items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[10px] leading-none font-medium text-muted-foreground">
                 {ed.state.doc.customNodes.length}
               </span>
-              <Icon svg={isOpen("__custom") ? ChevronDown : ChevronRight} class="size-3.5 text-muted-foreground" />
+              <Icon svg={isOpen("__custom") ? ChevronDown : ChevronRight} class="ml-auto size-3.5 shrink-0 text-muted-foreground/70" />
             </button>
             <Show when={isOpen("__custom")}>
               <div class="px-1 pt-1 pb-2">

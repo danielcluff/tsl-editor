@@ -1,5 +1,5 @@
 import * as THREE from "three/webgpu";
-import { checker, color, mix, uv, vec2, vec3 } from "three/tsl";
+import { checker, color, mix, positionGeometry, uv, vec2, vec3, vec4 } from "three/tsl";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
@@ -160,6 +160,7 @@ export class PreviewRenderer {
         this.mesh.material = mat;
         if (old !== this.fallbackMaterial) old.dispose();
       }
+      this.syncQuad();
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
     }
@@ -263,11 +264,39 @@ export class PreviewRenderer {
   geometryError?: string;
 
   private buildGeometry(s: PreviewSettings): THREE.BufferGeometry {
-    const p = s.geometryParams as Record<string, number>;
     this.geometryError = undefined;
+    const base = this.baseGeometry(s);
+    const script = s.geometryScript?.trim();
+    if (!script) return base;
+    // like the original, the script modifies the chosen geometry; returning a new one also works
+    try {
+      const out = new Function("THREE", "geometry", script)(THREE, base);
+      if (out && (out as THREE.BufferGeometry).isBufferGeometry) {
+        if (out !== base) base.dispose();
+        return out as THREE.BufferGeometry;
+      }
+      if (out !== undefined) throw new Error("Script must modify `geometry` or return a BufferGeometry");
+      return base;
+    } catch (err) {
+      this.geometryError = err instanceof Error ? err.message : String(err);
+      return base;
+    }
+  }
+
+  private baseGeometry(s: PreviewSettings): THREE.BufferGeometry {
+    const p = s.geometryParams as Record<string, number>;
     switch (s.geometry) {
       case "box":
-        return new THREE.BoxGeometry(p.width ?? 1.6, p.height ?? 1.6, p.depth ?? 1.6, p.segments ?? 1, p.segments ?? 1, p.segments ?? 1);
+        return new THREE.BoxGeometry(
+          p.width ?? 1.6,
+          p.height ?? 1.6,
+          p.depth ?? 1.6,
+          p.widthSegments ?? p.segments ?? 1,
+          p.heightSegments ?? p.segments ?? 1,
+          p.depthSegments ?? p.segments ?? 1,
+        );
+      case "fullscreenQuad":
+        return new THREE.PlaneGeometry(2, 2);
       case "torus":
         return new THREE.TorusGeometry(p.radius ?? 1, p.tube ?? 0.4, p.radialSegments ?? 32, p.tubularSegments ?? 96);
       case "torusKnot":
@@ -285,17 +314,7 @@ export class PreviewRenderer {
         );
       case "icosahedron":
         return new THREE.IcosahedronGeometry(p.radius ?? 1.2, p.detail ?? 0);
-      case "script":
-        try {
-          const fn = new Function("THREE", "geometry", s.geometryScript ?? "return new THREE.SphereGeometry(1.2, 64, 64);");
-          const g = fn(THREE, undefined);
-          if (g && g.isBufferGeometry) return g;
-          throw new Error("Script must return a BufferGeometry");
-        } catch (err) {
-          this.geometryError = err instanceof Error ? err.message : String(err);
-          return new THREE.SphereGeometry(1.2, 64, 64);
-        }
-      default:
+      default: // sphere (and the legacy "script" kind, whose script now runs as a modifier)
         return new THREE.SphereGeometry(p.radius ?? 1.2, p.widthSegments ?? 64, p.heightSegments ?? 64);
     }
   }
@@ -315,6 +334,27 @@ export class PreviewRenderer {
       this.mesh = new THREE.Mesh(geo, material);
     }
     this.scene.add(this.mesh);
+    this.syncQuad();
+  }
+
+  /** Vertex stage that places the 2x2 plane straight into clip space, covering the viewport. */
+  private quadVertex = vec4(positionGeometry.xy, 0, 1);
+  private userVertex = new WeakMap<THREE.Material, unknown>();
+
+  /** Fullscreen Quad: override the material's vertex stage; restore it for other geometries. */
+  private syncQuad() {
+    const on = this.settings.geometry === "fullscreenQuad";
+    this.mesh.frustumCulled = !on;
+    const mat = this.mesh.material as THREE.NodeMaterial;
+    const cur = (mat as unknown as { vertexNode: unknown }).vertexNode;
+    if (on && cur !== this.quadVertex) {
+      this.userVertex.set(mat, cur ?? null);
+      (mat as unknown as { vertexNode: unknown }).vertexNode = this.quadVertex;
+      mat.needsUpdate = true;
+    } else if (!on && cur === this.quadVertex) {
+      (mat as unknown as { vertexNode: unknown }).vertexNode = this.userVertex.get(mat) ?? null;
+      mat.needsUpdate = true;
+    }
   }
 
   private async loadEnv() {
@@ -393,26 +433,48 @@ export class PreviewRenderer {
     this.debugTargets = targets;
   }
 
+  /** Preview materials by node id; rebuilt only when the node's compiled value or type changes. */
+  private debugMats = new Map<string, { node: unknown; type: string; mat: THREE.MeshBasicNodeMaterial }>();
+
+  private debugMaterial(id: string, node: THREE.Node, t: string) {
+    const cached = this.debugMats.get(id);
+    if (cached && cached.node === node && cached.type === t) return cached.mat;
+    cached?.mat.dispose();
+    const mat = new THREE.MeshBasicNodeMaterial();
+    const n = node as unknown as ReturnType<typeof vec3>;
+    mat.colorNode =
+      t === "float" || t === "int" || t === "uint" || t === "bool"
+        ? vec3(n)
+        : t === "vec2"
+          ? vec3(n.x, n.y, 0)
+          : t === "vec4"
+            ? n.xyz
+            : vec3(n);
+    mat.side = THREE.DoubleSide;
+    this.debugMats.set(id, { node, type: t, mat });
+    return mat;
+  }
+
   private async renderDebug() {
     const res = this.materialResult;
     if (!res || !this.renderer) return;
     this.debugBusy = true;
     try {
+      for (const [id, entry] of this.debugMats) {
+        if (!this.debugTargets.has(id) || res.nodes[id] !== entry.node) {
+          entry.mat.dispose();
+          this.debugMats.delete(id);
+        }
+      }
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
       for (const [id, target] of this.debugTargets) {
         const node = res.nodes[id] as THREE.Node | undefined;
         if (!node) continue;
-        const mat = new THREE.MeshBasicNodeMaterial();
-        const t = target.type;
-        const n = node as unknown as ReturnType<typeof vec3>;
-        mat.colorNode =
-          t === "float" || t === "int" || t === "uint" || t === "bool"
-            ? vec3(n)
-            : t === "vec2"
-              ? vec3(n.x, n.y, 0)
-              : t === "vec4"
-                ? n.xyz
-                : vec3(n);
-        mat.side = THREE.DoubleSide;
+        // skip thumbnails scrolled or zoomed out of view
+        const r0 = target.canvas.getBoundingClientRect();
+        if (r0.width < 4 || r0.right < 0 || r0.bottom < 0 || r0.left > vw || r0.top > vh) continue;
+        const mat = this.debugMaterial(id, node, target.type);
         this.debugMesh.material = mat;
         const r = this.renderer;
         const prev = r.getRenderTarget();
@@ -420,14 +482,15 @@ export class PreviewRenderer {
         this.debugMesh.render(r);
         r.setRenderTarget(prev);
         const pixels = (await r.readRenderTargetPixelsAsync(this.debugRT, 0, 0, 96, 96)) as Uint8Array;
-        mat.dispose();
         const ctx = target.canvas.getContext("2d");
         if (!ctx) continue;
         const img = ctx.createImageData(96, 96);
         const flip = this.backend === "WebGL2";
+        // WebGPU readbacks pad every row but the last to 256 bytes (96px * 4 = 384 → 512)
+        const stride = (pixels.length - 96 * 4) / 95;
         for (let y = 0; y < 96; y++) {
           const srcRow = flip ? 95 - y : y;
-          img.data.set(pixels.subarray(srcRow * 96 * 4, srcRow * 96 * 4 + 96 * 4), y * 96 * 4);
+          img.data.set(pixels.subarray(srcRow * stride, srcRow * stride + 96 * 4), y * 96 * 4);
         }
         for (let i = 3; i < img.data.length; i += 4) img.data[i] = 255;
         ctx.putImageData(img, 0, 0);

@@ -452,7 +452,14 @@ export function NumberField(props: {
     window.addEventListener("pointerup", up);
   };
   return (
-    <div class={["flex h-7 items-center overflow-hidden rounded-md border border-input bg-transparent text-xs dark:bg-input/30", props.class]}>
+    <div class={["group relative flex h-7 items-center overflow-hidden rounded-md border border-input bg-transparent text-xs dark:bg-input/30", props.class]}>
+      <Show when={!props.label}>
+        {/* like the original: an unlabeled field scrubs from a grip on its left edge */}
+        <span
+          class="absolute inset-y-0 left-1 z-10 flex w-3 cursor-ew-resize items-center justify-center select-none before:h-[calc(100%-10px)] before:w-0.5 before:rounded-full before:bg-muted-foreground/40 group-hover:before:bg-muted-foreground/80"
+          onPointerDown={startScrub}
+        />
+      </Show>
       <Show when={props.label}>
         <span
           class="flex h-full shrink-0 cursor-ew-resize select-none items-center border-r border-input px-1.5 font-mono text-[10px] whitespace-nowrap uppercase text-muted-foreground"
@@ -462,7 +469,7 @@ export function NumberField(props: {
         </span>
       </Show>
       <input
-        class="h-full w-full min-w-0 bg-transparent px-1.5 font-mono tabular-nums outline-none"
+        class={["h-full w-full min-w-0 bg-transparent px-1.5 font-mono tabular-nums outline-none", { "pr-1.5 pl-3.5 text-right": !props.label }]}
         inputmode="decimal"
         value={text() ?? String(props.value)}
         onFocus={(e) => setText(e.currentTarget.value)}

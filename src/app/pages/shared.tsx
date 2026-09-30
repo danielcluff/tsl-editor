@@ -4,17 +4,18 @@ export function Logo(props: { size?: "sm" | "md" | "lg" }) {
     <div class="flex select-none flex-col items-center leading-none">
       <span
         class={[
-          "font-black tracking-tight",
-          { "text-[13px]": s() === "sm", "text-lg": s() === "md", "text-3xl": s() === "lg" },
+          "font-black",
+          { "text-sm tracking-tighter": s() === "sm", "text-lg tracking-tight": s() === "md", "text-3xl tracking-tight": s() === "lg" },
         ]}
       >
         TSL
       </span>
       <span
         class={[
-          "font-semibold text-muted-foreground",
+          "text-muted-foreground",
           {
-            "text-[6px] tracking-[0.25em]": s() === "sm",
+            "text-[8px] font-bold tracking-widest": s() === "sm",
+            "font-semibold": s() !== "sm",
             "text-[9px] tracking-[0.35em]": s() === "md",
             "text-[11px] tracking-[0.4em]": s() === "lg",
           },

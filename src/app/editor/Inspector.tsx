@@ -1,7 +1,7 @@
 import { For, Match, Show, Switch as SwitchFlow, createMemo, createSignal, useContext } from "solid-js";
 import { Code2, Layers, Pencil, Plus, Trash2, Upload, Waypoints } from "lucide-static";
 import { defaultGlobalValue } from "../../core/commands";
-import { findSubgraph, nodeTitle, resolvePorts, uid } from "../../core/graph";
+import { ANY_VALUE_TYPES, convertAnyValue, findSubgraph, literalType, nodeTitle, resolvePorts, uid, type AnyValueType } from "../../core/graph";
 import { getNodeDef, typeColor } from "../../core/registry";
 import type { GlobalDef, GraphNode, PortDef } from "../../core/types";
 import {
@@ -26,10 +26,10 @@ type Tab = "properties" | "uniforms" | "globals";
 export function Inspector() {
   const [tab, setTab] = createSignal<Tab>("properties");
   return (
-    <div class="flex min-h-0 flex-1 flex-col rounded-lg border bg-card" data-ui>
-      <div class="p-1.5">
+    <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-sidebar shadow-lg" data-ui>
+      <div class="mx-2 mt-3 mb-2">
         <Tabs
-          class="w-full"
+          class="h-9 w-full [&>button]:text-sm"
           value={tab()}
           onChange={setTab}
           tabs={[
@@ -79,7 +79,7 @@ function useEditSession(ed: Editor) {
 
 function Section(props: { title: string; hint?: string; children: unknown; action?: unknown }) {
   return (
-    <div class="border-t px-3 py-3 first:border-t-0">
+    <div class="border-t p-4 first:border-t-0">
       <div class="mb-2 flex items-center justify-between gap-2">
         <span class="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">{props.title}</span>
         <Show when={props.hint}>
@@ -336,7 +336,7 @@ function NodeProperties(props: { node: GraphNode }) {
 
   return (
     <div>
-      <div class="border-b px-3 py-3">
+      <div class="border-b px-4 py-3">
         <Show
           when={editingTitle()}
           fallback={
@@ -358,10 +358,9 @@ function NodeProperties(props: { node: GraphNode }) {
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
           />
         </Show>
-        <div class="mt-0.5 font-mono text-[10px] text-muted-foreground">{props.node.type}</div>
-        <Show when={def().description}>
-          <p class="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">{def().description}</p>
-        </Show>
+        <div class="mt-0.5 text-xs text-muted-foreground" title={def().description}>
+          {props.node.type}
+        </div>
       </div>
 
       <SwitchFlow>
@@ -615,26 +614,46 @@ function InputsSection(props: {
   const types = () => ed.types().get(props.node.id)?.in ?? {};
   return (
     <Show when={props.ports.length} fallback={<div class="px-3 py-4 text-xs text-muted-foreground">This node has no editable inputs.</div>}>
-      <Section title="Inputs">
+      <div class="flex flex-col gap-4 p-4">
         <For each={props.ports}>
           {(p) => (
-            <Field
-              label={p.label}
-              sub={`${types()[p.key] ?? p.type}${p.connectionOnly ? " • connection only" : ""}`}
-              color={typeColor(types()[p.key] ?? String(p.type))}
-              right={
+            <div class="flex flex-col gap-1.5">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[10px] font-medium tracking-wider text-foreground/70 uppercase" title={`${types()[p.key] ?? p.type}${p.connectionOnly ? " • connection only" : ""}`}>
+                  {p.label}
+                </span>
                 <Show when={props.connected.has(p.key)}>
                   <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">Connected</span>
                 </Show>
-              }
-            >
+                <Show when={!props.connected.has(p.key) && p.connectionOnly}>
+                  <span class="text-[10px] text-muted-foreground">connection only</span>
+                </Show>
+              </div>
               <Show when={!props.connected.has(p.key) && !p.connectionOnly && !["texture", "mat3", "mat4", "sampler2D"].includes(String(p.type))}>
-                {props.editor(p) as never}
+                <div class="flex flex-col gap-2">
+                  {/* like the original: an unconnected `any` input picks which literal type it holds */}
+                  <Show when={p.type === "any" && !p.options}>
+                    <div class="flex items-center justify-between">
+                      <span class="text-xs text-muted-foreground">Type</span>
+                      <select
+                        aria-label={`${p.label} type`}
+                        class="h-6 rounded border bg-accent px-1 py-0 text-[10px] outline-none focus:ring-1 focus:ring-ring"
+                        value={literalType(props.node.data.values[p.key] ?? p.default ?? 0)}
+                        onChange={(e) =>
+                          ed.setValue(props.node.id, p.key, convertAnyValue(props.node.data.values[p.key] ?? p.default ?? 0, e.currentTarget.value as AnyValueType))
+                        }
+                      >
+                        <For each={ANY_VALUE_TYPES}>{(t) => <option value={t}>{t === "bool" ? "Bool" : t[0].toUpperCase() + t.slice(1)}</option>}</For>
+                      </select>
+                    </div>
+                  </Show>
+                  {props.editor(p) as never}
+                </div>
               </Show>
-            </Field>
+            </div>
           )}
         </For>
-      </Section>
+      </div>
     </Show>
   );
 }
@@ -923,20 +942,23 @@ function Uniforms() {
   const globals = createMemo(() => ed.state.doc.globals.filter((g) => g.kind === "uniform"));
   return (
     <div>
-      <div class="flex items-start justify-between gap-2 px-3 py-3">
-        <div>
-          <div class="text-sm font-semibold">Uniforms</div>
-          <p class="text-[11px] text-muted-foreground">Edit node and global uniforms without hunting nodes.</p>
+      <div class="border-b px-4 py-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-semibold">Uniforms</h3>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-muted-foreground">{nodes().length + globals().length}</span>
+            <Button size="sm" variant="outline" class="h-7" onClick={() => ed.addNodeAt("const/uniform")}>
+              <Icon svg={Plus} class="mr-1 size-3.5" /> New
+            </Button>
+          </div>
         </div>
-        <Button size="xs" variant="outline" onClick={() => ed.addNodeAt("const/uniform")}>
-          <Icon svg={Plus} class="size-3" /> New
-        </Button>
+        <p class="mt-0.5 text-xs text-muted-foreground">Edit node and global uniforms without hunting nodes</p>
       </div>
       <Show
         when={nodes().length || globals().length}
-        fallback={<div class="px-3 py-6 text-center text-xs text-muted-foreground">No uniforms in this graph.</div>}
+        fallback={<p class="px-4 py-4 text-sm text-muted-foreground">No uniforms in this graph.</p>}
       >
-        <div class="flex flex-col gap-3 border-t px-3 py-3">
+        <div class="flex flex-col gap-3 px-4 py-4">
           <For each={nodes()}>
             {({ graph, node }) => (
               <Field
@@ -1027,24 +1049,25 @@ function Globals() {
     });
   return (
     <div>
-      <div class="flex items-start justify-between gap-2 px-3 py-3">
-        <div>
-          <div class="flex items-center gap-2 text-sm font-semibold">
-            Globals
-            <span class="rounded-md bg-muted px-1.5 font-mono text-[10px] text-muted-foreground">{ed.state.doc.globals.length}</span>
+      <div class="border-b px-4 py-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-semibold">Globals</h3>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-muted-foreground">{ed.state.doc.globals.length}</span>
+            <Button size="sm" variant="outline" class="h-7" onClick={add}>
+              <Icon svg={Plus} class="mr-1 size-3.5" /> Add
+            </Button>
           </div>
-          <p class="text-[11px] text-muted-foreground">Define project-level uniforms, varyings, and constants.</p>
         </div>
-        <Button size="xs" variant="outline" onClick={add}>
-          <Icon svg={Plus} class="size-3" /> Add
-        </Button>
+        <p class="mt-0.5 text-xs text-muted-foreground">Define project-level uniforms, varyings, and constants.</p>
       </div>
-      <div class="border-t px-3 py-3">
-        <div class="mb-1.5 flex items-center justify-between">
-          <span class="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">Bulk Import</span>
+      <div class="space-y-2 px-4 py-4">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-medium tracking-wider text-foreground/70 uppercase">Bulk Import</span>
           <Button
-            size="xs"
-            variant="ghost"
+            size="sm"
+            variant="outline"
+            class="h-7"
             disabled={!bulk().trim()}
             onClick={() => {
               const parsed = parseGlobals(bulk());
@@ -1067,19 +1090,20 @@ function Globals() {
           </Button>
         </div>
         <Textarea
-          rows={3}
-          class="font-mono text-[11px]"
+          rows={5}
+          class="text-sm"
           placeholder={"Paste const foo = uniform(1); const bar = uniform(vec2(0, 0));"}
           value={bulk()}
           onInput={(e) => setBulk(e.currentTarget.value)}
         />
-        <p class="mt-1.5 text-[10px] leading-relaxed text-muted-foreground">
-          Supports uniform(), varying(), and constant float(), int(), bool(), vec2(), vec3(), vec4(), and color().
+        <p class="text-[11px] text-muted-foreground">
+          Supports <code>uniform()</code>, <code>varying()</code>, and constant initializers with <code>float</code>, <code>int</code>,{" "}
+          <code>bool</code>, <code>vec2</code>, <code>vec3</code>, <code>vec4</code>, and <code>color</code>.
         </p>
       </div>
       <Show
         when={ed.state.doc.globals.length}
-        fallback={<div class="px-3 py-6 text-center text-xs text-muted-foreground">No globals yet. Add one to reuse it across your graph.</div>}
+        fallback={<p class="px-4 pb-4 text-sm text-muted-foreground">No globals yet. Add one to reuse it across your graph.</p>}
       >
         <div class="flex flex-col divide-y border-t">
           <For each={ed.state.doc.globals}>

@@ -20,6 +20,8 @@ export interface NodeCardProps {
   /** handle currently hovered as a valid connection target */
   targetHandle?: string | null;
   onHandleDown?: (e: PointerEvent, side: "in" | "out", key: string) => void;
+  /** Node can show a live preview thumbnail (it has a value in the material graph). */
+  previewable?: boolean;
   onToggleDebug?: () => void;
   debugRef?: (el: HTMLCanvasElement) => void;
   onTitleDblClick?: () => void;
@@ -38,6 +40,8 @@ export function NodeCard(props: NodeCardProps) {
   const kind = () => def()?.kind ?? "standard";
   const isMaterial = () => kind() === "material";
   const title = () => nodeTitle(props.doc, props.node);
+  // previews are on unless the user switched them off for this node
+  const previewOn = () => !!props.previewable && !props.static && props.node.data.debug !== false;
   const header = () =>
     kind() === "placeholder"
       ? "bg-[repeating-linear-gradient(135deg,rgba(245,158,11,0.18)_0_6px,transparent_6px_12px)]"
@@ -87,15 +91,16 @@ export function NodeCard(props: NodeCardProps) {
             {title()}
           </span>
         </div>
-        <Show when={kind() !== "placeholder"}>
+        <Show when={props.previewable}>
           <button
             type="button"
             data-nodrag
-            aria-label="Show node debug preview"
-            aria-pressed={props.node.data.debug ? "true" : "false"}
+            aria-label="Toggle node preview"
+            title={previewOn() ? "Hide preview" : "Show preview"}
+            aria-pressed={previewOn() ? "true" : "false"}
             class={[
               "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors",
-              props.node.data.debug
+              previewOn()
                 ? "border-blue-500/50 bg-blue-500/15 text-blue-500"
                 : "border-transparent text-gray-500 hover:bg-white/40 dark:hover:bg-white/10",
             ]}
@@ -109,6 +114,16 @@ export function NodeCard(props: NodeCardProps) {
           </button>
         </Show>
       </div>
+
+      <Show when={previewOn()}>
+        <canvas
+          ref={(el) => props.debugRef?.(el)}
+          width="96"
+          height="96"
+          class="block aspect-square w-full bg-black"
+          style={{ "min-width": "120px" }}
+        />
+      </Show>
 
       <Extra {...props} />
 
@@ -154,12 +169,15 @@ export function NodeCard(props: NodeCardProps) {
                       >
                         {p().label}
                       </span>
-                      <Show when={valueHint(p())}>
-                        {(v) => (
+                      {/* wrapped so falsy defaults like 0 or false still show */}
+                      <Show when={valueHint(p()) !== null ? { v: valueHint(p()) } : undefined}>
+                        {(h) => {
+                          const v = () => h().v;
+                          return (
                           <Show
                             when={p().type === "color" || (typeof v() === "string" && /^#[0-9a-f]{6}$/i.test(String(v())))}
                             fallback={
-                              <Show when={fmt(v())}>
+                              <Show when={fmt(v()) !== ""}>
                                 <span class="font-mono text-[9px] text-gray-500 tabular-nums">({fmt(v())})</span>
                               </Show>
                             }
@@ -170,7 +188,8 @@ export function NodeCard(props: NodeCardProps) {
                               style={{ "background-color": String(v()) }}
                             />
                           </Show>
-                        )}
+                          );
+                        }}
                       </Show>
                     </div>
                   )}
@@ -211,17 +230,6 @@ export function NodeCard(props: NodeCardProps) {
         </Show>
       </div>
 
-      <Show when={props.node.data.debug && !props.static}>
-        <div class="px-2 pb-2">
-          <canvas
-            ref={(el) => props.debugRef?.(el)}
-            width="96"
-            height="96"
-            class="aspect-square w-full rounded-md border border-gray-200 bg-black dark:border-white/10"
-            style={{ "image-rendering": "pixelated", "min-width": "120px" }}
-          />
-        </div>
-      </Show>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onSettled, useContext } from "solid-js";
-import { canConnectTypes, graphOf } from "../../core/graph";
+import { canConnectTypes, graphOf, hasPreview } from "../../core/graph";
 import { getNodeDef, typeColor } from "../../core/registry";
 import type { GraphEdge, GraphNode, XY } from "../../core/types";
 import { EditorContext, type Editor } from "./store";
@@ -507,6 +507,8 @@ function NodeWrapper(props: {
   let el!: HTMLDivElement;
   const ports = createMemo(() => ed.resolvePorts(props.node));
   const t = createMemo(() => ed.types().get(props.node.id));
+  // thumbnails are rendered from the compiled material graph only
+  const previewable = () => ed.state.graph === "material" && hasPreview(props.node.type);
   const selected = () => ed.state.selection.nodes.includes(props.node.id);
   const onDown = useNodeDrag(ed, () => props.node);
 
@@ -557,7 +559,8 @@ function NodeWrapper(props: {
         connectedOut={props.connectedOut}
         targetHandle={props.targetHandle}
         onHandleDown={props.onHandleDown}
-        onToggleDebug={() => ed.updateData(props.node.id, (n) => (n.data.debug = !n.data.debug), { recompile: false })}
+        previewable={previewable()}
+        onToggleDebug={() => ed.updateData(props.node.id, (n) => (n.data.debug = n.data.debug === false), { recompile: false })}
         debugRef={(c) => ui.registerDebugCanvas(props.node.id, c)}
       />
     </div>

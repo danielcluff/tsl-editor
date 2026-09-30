@@ -1,70 +1,67 @@
 import { For, Show, createEffect, createSignal, onSettled, snapshot, useContext } from "solid-js";
 import { Camera, CircleAlert, Crosshair, Maximize2, Minimize2, SlidersHorizontal } from "lucide-static";
 import type { GeometryKind, GraphKind, PreviewSettings } from "../../core/types";
-import { resolveSettings } from "../../core/graph";
+import { hasPreview, resolveSettings } from "../../core/graph";
 import { ENVIRONMENTS, PreviewRenderer } from "../../runtime/preview";
 import { Button, Dialog, Icon, NumberField, Popover, Select, Slider, Switch, Tooltip, togglePopover, type PopoverAnchor } from "../ui";
 import { CodeEditor } from "./CodeEditor";
 import { EditorContext } from "./store";
 import { ui } from "./ui-state";
 
+// the original's list, plus our Torus Knot and Icosahedron
 const GEOMETRIES: { value: GeometryKind; label: string }[] = [
   { value: "sphere", label: "Sphere" },
   { value: "box", label: "Box" },
   { value: "torus", label: "Torus" },
   { value: "torusKnot", label: "Torus Knot" },
   { value: "plane", label: "Plane" },
+  { value: "fullscreenQuad", label: "Fullscreen Quad" },
   { value: "cylinder", label: "Cylinder" },
   { value: "icosahedron", label: "Icosahedron" },
-  { value: "script", label: "Custom Script" },
 ];
 
-const PARAMS: Record<string, { key: string; label: string; def: number; int?: boolean }[]> = {
+type ParamField = { key: string; def: number; int?: boolean; legacy?: string };
+/** One settings row per entry, labelled like the original (e.g. "Segments (W/H)"). */
+const PARAMS: Record<string, { label: string; fields: ParamField[] }[]> = {
   sphere: [
-    { key: "radius", label: "Radius", def: 1.2 },
-    { key: "widthSegments", label: "Segments W", def: 64, int: true },
-    { key: "heightSegments", label: "Segments H", def: 64, int: true },
+    { label: "Radius", fields: [{ key: "radius", def: 1.2 }] },
+    { label: "Segments (W/H)", fields: [{ key: "widthSegments", def: 64, int: true }, { key: "heightSegments", def: 64, int: true }] },
   ],
   box: [
-    { key: "width", label: "W", def: 1.6 },
-    { key: "height", label: "H", def: 1.6 },
-    { key: "depth", label: "D", def: 1.6 },
-    { key: "segments", label: "Segments", def: 1, int: true },
+    { label: "Size (W/H/D)", fields: [{ key: "width", def: 1.6 }, { key: "height", def: 1.6 }, { key: "depth", def: 1.6 }] },
+    {
+      label: "Segments",
+      fields: [
+        { key: "widthSegments", def: 1, int: true, legacy: "segments" },
+        { key: "heightSegments", def: 1, int: true, legacy: "segments" },
+        { key: "depthSegments", def: 1, int: true, legacy: "segments" },
+      ],
+    },
   ],
   torus: [
-    { key: "radius", label: "Radius", def: 1 },
-    { key: "tube", label: "Tube", def: 0.4 },
-    { key: "tubularSegments", label: "Seg T", def: 96, int: true },
-    { key: "radialSegments", label: "Seg R", def: 32, int: true },
+    { label: "Radius", fields: [{ key: "radius", def: 1 }] },
+    { label: "Tube", fields: [{ key: "tube", def: 0.4 }] },
+    { label: "Segments (T/R)", fields: [{ key: "tubularSegments", def: 96, int: true }, { key: "radialSegments", def: 32, int: true }] },
   ],
   torusKnot: [
-    { key: "radius", label: "Radius", def: 0.8 },
-    { key: "tube", label: "Tube", def: 0.28 },
-    { key: "tubularSegments", label: "Seg T", def: 160, int: true },
-    { key: "radialSegments", label: "Seg R", def: 24, int: true },
+    { label: "Radius", fields: [{ key: "radius", def: 0.8 }] },
+    { label: "Tube", fields: [{ key: "tube", def: 0.28 }] },
+    { label: "Segments (T/R)", fields: [{ key: "tubularSegments", def: 160, int: true }, { key: "radialSegments", def: 24, int: true }] },
   ],
   plane: [
-    { key: "width", label: "W", def: 2.4 },
-    { key: "height", label: "H", def: 2.4 },
-    { key: "widthSegments", label: "Seg W", def: 64, int: true },
-    { key: "heightSegments", label: "Seg H", def: 64, int: true },
+    { label: "Size (W/H)", fields: [{ key: "width", def: 2.4 }, { key: "height", def: 2.4 }] },
+    { label: "Segments (W/H)", fields: [{ key: "widthSegments", def: 64, int: true }, { key: "heightSegments", def: 64, int: true }] },
   ],
   cylinder: [
-    { key: "radiusTop", label: "Top", def: 0.8 },
-    { key: "radiusBottom", label: "Bot", def: 0.8 },
-    { key: "height", label: "Height", def: 2 },
-    { key: "radialSegments", label: "Seg R", def: 48, int: true },
-    { key: "heightSegments", label: "Seg H", def: 1, int: true },
+    { label: "Radius (Top/Bot)", fields: [{ key: "radiusTop", def: 0.8 }, { key: "radiusBottom", def: 0.8 }] },
+    { label: "Height", fields: [{ key: "height", def: 2 }] },
+    { label: "Segments (R/H)", fields: [{ key: "radialSegments", def: 48, int: true }, { key: "heightSegments", def: 1, int: true }] },
   ],
   icosahedron: [
-    { key: "radius", label: "Radius", def: 1.2 },
-    { key: "detail", label: "Detail", def: 0, int: true },
+    { label: "Radius", fields: [{ key: "radius", def: 1.2 }] },
+    { label: "Detail", fields: [{ key: "detail", def: 0, int: true }] },
   ],
 };
-
-const DEFAULT_SCRIPT = `// Return a THREE.BufferGeometry. \`THREE\` is in scope.
-const geometry = new THREE.TorusKnotGeometry(0.8, 0.25, 200, 32);
-return geometry;`;
 
 export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) {
   const ed = useContext(EditorContext);
@@ -78,6 +75,7 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
 
   onSettled(() => {
     preview = new PreviewRenderer(host, resolveSettings(snapshot(ed.state.doc.settings) as PreviewSettings));
+    if (import.meta.env.DEV) (window as unknown as { __tslPreview: unknown }).__tslPreview = preview;
     preview.onError = (errs) => ed.setState((s) => void (s.runtimeErrors = errs));
     preview.ready
       .then(() => {
@@ -154,9 +152,10 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
   createEffect(
     () => {
       ui.debugVersion();
+      if (ed.state.graph !== "material") return [];
       return ed
         .graph()
-        .nodes.filter((n) => n.data.debug)
+        .nodes.filter((n) => n.data.debug !== false && hasPreview(n.type))
         .map((n) => ({ id: n.id, type: ed.types().get(n.id)?.out.out ?? Object.values(ed.types().get(n.id)?.out ?? {})[0] ?? "vec3" }));
     },
     (list) => {
@@ -170,6 +169,7 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
     },
   );
 
+  const settings = () => ed.state.doc.settings;
   const setSetting = <K extends keyof PreviewSettings>(key: K, value: PreviewSettings[K]) =>
     ed.mutate((doc) => void (doc.settings[key] = value), { history: false, recompile: false });
 
@@ -205,11 +205,11 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
   return (
     <div
       class={[
-        "shrink-0 overflow-hidden rounded-lg border bg-card",
+        "shrink-0 overflow-hidden rounded-xl border bg-card shadow-lg",
         // one position class only: `relative` is emitted after `fixed` and would win
-        // expanded: fill everything left of the inspector column (300px wide + 8px gap + 8px padding),
+        // expanded: fill everything left of the inspector column (288px wide + 8px gap + 16px inset),
         // which then takes the full height on the right
-        ui.previewExpanded() ? "fixed top-2 bottom-2 left-2 right-[316px] z-40 shadow-2xl" : "relative h-[300px]",
+        ui.previewExpanded() ? "fixed top-4 bottom-4 left-4 right-[312px] z-40 shadow-2xl" : "relative h-72",
       ]}
       data-ui
     >
@@ -287,90 +287,109 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
         </div>
       </Show>
 
-      <Popover open={!!settingsAnchor()} anchor={settingsAnchor()?.rect} trigger={settingsAnchor()?.el} align="end" onClose={() => setSettingsAnchor(null)} class="thin-scroll max-h-[80vh] w-72 overflow-y-auto p-3">
-        <div class="mb-3 text-sm font-semibold">Preview Settings</div>
-        <div class="flex flex-col gap-3 text-xs">
-          <Row label="Geometry">
-            <Select
-              class="h-7 text-xs"
-              value={ed.state.doc.settings.geometry}
-              options={GEOMETRIES}
-              onChange={(v) => {
-                setSetting("geometry", v as GeometryKind);
-                setSetting("geometryParams", {});
-                if (v === "script" && !ed.state.doc.settings.geometryScript) setSetting("geometryScript", DEFAULT_SCRIPT);
-              }}
-            />
-          </Row>
-          <Show when={PARAMS[ed.state.doc.settings.geometry]}>
-            {(params) => (
-              <div class="grid grid-cols-2 gap-1.5">
-                <For each={params()}>
-                  {(p) => (
-                    <NumberField
-                      label={p.label}
-                      integer={p.int}
-                      min={p.int ? 0 : 0.01}
-                      value={Number(ed.state.doc.settings.geometryParams[p.key] ?? p.def)}
-                      onChange={(v) => setSetting("geometryParams", { ...ed.state.doc.settings.geometryParams, [p.key]: v })}
-                    />
-                  )}
-                </For>
-                <Show when={ed.state.doc.settings.geometry === "cylinder"}>
-                  <label class="col-span-2 flex items-center justify-between">
-                    Open Ended
-                    <Switch
-                      checked={Boolean(ed.state.doc.settings.geometryParams.openEnded)}
-                      onChange={(v) => setSetting("geometryParams", { ...ed.state.doc.settings.geometryParams, openEnded: v })}
-                    />
-                  </label>
-                </Show>
-              </div>
-            )}
-          </Show>
-          <Show when={ed.state.doc.settings.geometry === "script"}>
-            <Button size="xs" variant="outline" onClick={() => setScriptOpen(true)}>
-              Edit Geometry Script
-            </Button>
-            <Show when={preview?.geometryError}>
-              <div class="text-destructive">Geometry script error: {preview?.geometryError}</div>
-            </Show>
-          </Show>
-          <Row label="Environment">
-            <Select
-              class="h-7 text-xs"
-              value={ed.state.doc.settings.environment}
-              options={ENVIRONMENTS.map((e) => ({ value: e.value, label: e.label }))}
-              onChange={(v) => setSetting("environment", v)}
-            />
-          </Row>
-          <Row label={`Intensity (${ed.state.doc.settings.envIntensity.toFixed(2)})`}>
-            <Slider value={ed.state.doc.settings.envIntensity} min={0} max={3} onChange={(v) => setSetting("envIntensity", v)} />
-          </Row>
-          <Toggle label="Show Background" value={ed.state.doc.settings.showBackground} onChange={(v) => setSetting("showBackground", v)} />
-          <Toggle label="Show Grid" value={ed.state.doc.settings.showGrid} onChange={(v) => setSetting("showGrid", v)} />
-          <Toggle label="Enable Post-Processing" value={ed.state.doc.settings.enablePost} onChange={(v) => setSetting("enablePost", v)} />
-          <Toggle label="Show Backdrop" value={ed.state.doc.settings.showBackdrop} onChange={(v) => setSetting("showBackdrop", v)} />
-          <LightControls settings={resolveSettings(ed.state.doc.settings)} set={setSetting} />
-          <Toggle label="Instancing" value={ed.state.doc.settings.instancing} onChange={(v) => setSetting("instancing", v)} />
-          <Show when={ed.state.doc.settings.instancing}>
-            <Row label="Instance Count">
-              <NumberField integer min={1} max={100000} value={ed.state.doc.settings.instanceCount} onChange={(v) => setSetting("instanceCount", v)} />
-            </Row>
-          </Show>
-          <Row label="Thumbnail">
-            <div class="flex items-center gap-1.5">
+      <Popover
+        open={!!settingsAnchor()}
+        anchor={settingsAnchor()?.rect}
+        trigger={settingsAnchor()?.el}
+        align="end"
+        onClose={() => setSettingsAnchor(null)}
+        class="thin-scroll max-h-[80vh] w-80 overflow-y-auto p-4"
+      >
+        <div class="grid gap-4">
+          <div class="space-y-2">
+            <h4 class="leading-none font-medium">Preview Settings</h4>
+            <p class="text-sm text-muted-foreground">Configure the preview geometry and instancing.</p>
+          </div>
+          <div class="grid gap-4">
+            <Field label="Geometry">
               <Select
-                class="h-7 text-xs"
-                value={ed.state.doc.settings.thumbnail}
+                class="h-9 px-3"
+                value={settings().geometry === "script" ? "sphere" : settings().geometry}
+                options={GEOMETRIES}
+                onChange={(v) => {
+                  setSetting("geometry", v as GeometryKind);
+                  setSetting("geometryParams", {});
+                }}
+              />
+            </Field>
+            <Field label="Environment">
+              <Select
+                class="h-9 px-3"
+                value={settings().environment}
+                options={ENVIRONMENTS.map((e) => ({ value: e.value, label: e.label }))}
+                onChange={(v) => setSetting("environment", v)}
+              />
+            </Field>
+            <Show when={settings().environment !== "none"}>
+              <Field label="Intensity">
+                <NumberField class="h-8" min={0} max={10} step={0.01} value={settings().envIntensity} onChange={(v) => setSetting("envIntensity", v)} />
+              </Field>
+              <Check label="Show Background" value={settings().showBackground} onChange={(v) => setSetting("showBackground", v)} />
+            </Show>
+            <Check label="Show Grid" value={settings().showGrid} onChange={(v) => setSetting("showGrid", v)} />
+            <Check label="Enable Post-Processing" value={settings().enablePost} onChange={(v) => setSetting("enablePost", v)} />
+            <For each={PARAMS[settings().geometry] ?? []}>
+              {(row) => (
+                <Field label={row.label}>
+                  <div class="flex gap-1">
+                    <For each={row.fields}>
+                      {(f) => (
+                        <NumberField
+                          class="h-8 min-w-0 flex-1"
+                          integer={f.int}
+                          min={f.int ? (f.key === "detail" ? 0 : 1) : 0.01}
+                          value={Number(settings().geometryParams[f.key] ?? (f.legacy ? settings().geometryParams[f.legacy] : undefined) ?? f.def)}
+                          onChange={(v) => setSetting("geometryParams", { ...settings().geometryParams, [f.key]: v })}
+                        />
+                      )}
+                    </For>
+                  </div>
+                </Field>
+              )}
+            </For>
+            <Show when={settings().geometry === "cylinder"}>
+              <Check
+                label="Open Ended"
+                value={Boolean(settings().geometryParams.openEnded)}
+                onChange={(v) => setSetting("geometryParams", { ...settings().geometryParams, openEnded: v })}
+              />
+            </Show>
+            <div class="flex items-center justify-between">
+              <span class="text-sm leading-none font-medium">Geometry Script</span>
+              <Button size="sm" variant="outline" onClick={() => setScriptOpen(true)}>
+                {settings().geometryScript?.trim() ? "Edit" : "Add"}
+              </Button>
+            </div>
+            <Show when={preview?.geometryError && settings().geometryScript?.trim()}>
+              <div class="-mt-2 text-xs text-destructive">Geometry script error: {preview?.geometryError}</div>
+            </Show>
+            <div class="my-1 h-px bg-border" />
+            <Check label="Show Backdrop" value={settings().showBackdrop} onChange={(v) => setSetting("showBackdrop", v)} />
+            <Check label="Instancing" value={settings().instancing} onChange={(v) => setSetting("instancing", v)} />
+            <Show when={settings().instancing}>
+              <Field label="Instance Count">
+                <NumberField class="h-8" integer min={1} max={100000} value={settings().instanceCount} onChange={(v) => setSetting("instanceCount", v)} />
+              </Field>
+            </Show>
+            {/* ours: lighting and thumbnail controls (not in the original) */}
+            <div class="my-1 h-px bg-border" />
+            <LightControls settings={resolveSettings(ed.state.doc.settings)} set={setSetting} />
+            <div class="my-1 h-px bg-border" />
+            <Field label="Thumbnail">
+              <Select
+                class="h-9 px-3"
+                value={settings().thumbnail}
                 options={[
                   { label: "Auto", value: "auto" },
                   { label: "Manual", value: "manual" },
                 ]}
                 onChange={(v) => setSetting("thumbnail", v as "auto" | "manual")}
               />
+            </Field>
+            <div class="flex items-center justify-between">
+              <span class="text-sm leading-none font-medium">Capture Thumbnail</span>
               <Button
-                size="xs"
+                size="sm"
                 variant="outline"
                 onClick={async () => {
                   const t = await preview?.thumbnail();
@@ -381,15 +400,27 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
                 Capture
               </Button>
             </div>
-          </Row>
+          </div>
         </div>
       </Popover>
 
-      <Dialog open={scriptOpen()} onClose={() => setScriptOpen(false)} title="Geometry Script" description="Runs with THREE in scope and must return a BufferGeometry." class="max-w-2xl">
+      <Dialog
+        open={scriptOpen()}
+        onClose={() => setScriptOpen(false)}
+        title="Geometry Script"
+        description={
+          <>
+            Runs automatically on the preview geometry. Available variables: <code class="font-mono text-xs">geometry</code>,{" "}
+            <code class="font-mono text-xs">THREE</code>.
+          </>
+        }
+        class="max-w-2xl"
+      >
         <GeometryScriptEditor
-          value={ed.state.doc.settings.geometryScript ?? DEFAULT_SCRIPT}
+          value={ed.state.doc.settings.geometryScript ?? ""}
           onSave={(v) => {
-            setSetting("geometryScript", v);
+            // an empty script removes it (the row goes back to "Add")
+            setSetting("geometryScript", v.trim() ? v : undefined);
             setScriptOpen(false);
           }}
           onCancel={() => setScriptOpen(false)}
@@ -416,20 +447,22 @@ function GeometryScriptEditor(props: { value: string; onSave: (v: string) => voi
   );
 }
 
-function Row(props: { label: string; children: unknown }) {
+/** Label on the left, control filling the right column (the original's two-column rows). */
+function Field(props: { label: string; children: unknown }) {
   return (
-    <div class="flex flex-col gap-1">
-      <span class="text-muted-foreground">{props.label}</span>
+    <div class="grid grid-cols-2 items-center gap-4">
+      <span class="text-sm leading-none font-medium">{props.label}</span>
       {props.children as never}
     </div>
   );
 }
 
-function Toggle(props: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+/** The original uses plain checkboxes for boolean settings. */
+function Check(props: { label: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
-    <label class="flex items-center justify-between">
-      {props.label}
-      <Switch checked={props.value} onChange={props.onChange} />
+    <label class="flex cursor-pointer items-center justify-between">
+      <span class="text-sm leading-none font-medium select-none">{props.label}</span>
+      <input type="checkbox" class="size-4 cursor-pointer rounded border-primary" checked={props.value} onChange={(e) => props.onChange(e.currentTarget.checked)} />
     </label>
   );
 }
@@ -440,37 +473,35 @@ function LightControls(props: {
 }) {
   const s = () => props.settings;
   return (
-    <div class="-mx-3 flex flex-col gap-3 border-y px-3 py-3">
-      <div class="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">Light</div>
-      <Toggle label="Directional Light" value={s().lightEnabled} onChange={(v) => props.set("lightEnabled", v)} />
+    <>
+      <Check label="Directional Light" value={s().lightEnabled} onChange={(v) => props.set("lightEnabled", v)} />
       <Show when={s().lightEnabled}>
-        <Row label={`Intensity (${s().lightIntensity.toFixed(2)})`}>
-          <Slider value={s().lightIntensity} min={0} max={10} step={0.05} onChange={(v) => props.set("lightIntensity", v)} />
-        </Row>
-        <label class="flex items-center justify-between">
-          Color
-          <span class="flex items-center gap-2">
-            <span class="font-mono text-[10px] text-muted-foreground uppercase">{s().lightColor}</span>
+        <Field label="Light Intensity">
+          <NumberField class="h-8" min={0} max={20} step={0.05} value={s().lightIntensity} onChange={(v) => props.set("lightIntensity", v)} />
+        </Field>
+        <Field label="Light Color">
+          <label class="flex h-8 items-center gap-2 rounded-md border border-input px-2 dark:bg-input/30">
             <input
               type="color"
               aria-label="Light color"
-              class="h-6 w-8 cursor-pointer rounded border bg-transparent p-0"
+              class="size-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
               value={s().lightColor}
               onInput={(e) => props.set("lightColor", e.currentTarget.value)}
             />
-          </span>
-        </label>
-        <Row label={`Azimuth (${Math.round(s().lightAzimuth)}°)`}>
+            <span class="font-mono text-xs text-muted-foreground uppercase">{s().lightColor}</span>
+          </label>
+        </Field>
+        <Field label={`Azimuth (${Math.round(s().lightAzimuth)}°)`}>
           <Slider value={s().lightAzimuth} min={-180} max={180} step={1} onChange={(v) => props.set("lightAzimuth", v)} />
-        </Row>
-        <Row label={`Elevation (${Math.round(s().lightElevation)}°)`}>
+        </Field>
+        <Field label={`Elevation (${Math.round(s().lightElevation)}°)`}>
           <Slider value={s().lightElevation} min={-90} max={90} step={1} onChange={(v) => props.set("lightElevation", v)} />
-        </Row>
-        <Toggle label="Show Light Helper" value={s().showLightHelper} onChange={(v) => props.set("showLightHelper", v)} />
+        </Field>
+        <Check label="Show Light Helper" value={s().showLightHelper} onChange={(v) => props.set("showLightHelper", v)} />
       </Show>
-      <Row label={`Ambient (${s().ambientIntensity.toFixed(2)})`}>
-        <Slider value={s().ambientIntensity} min={0} max={3} step={0.05} onChange={(v) => props.set("ambientIntensity", v)} />
-      </Row>
-    </div>
+      <Field label="Ambient">
+        <NumberField class="h-8" min={0} max={10} step={0.05} value={s().ambientIntensity} onChange={(v) => props.set("ambientIntensity", v)} />
+      </Field>
+    </>
   );
 }

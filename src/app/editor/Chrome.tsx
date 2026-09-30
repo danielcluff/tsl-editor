@@ -50,11 +50,11 @@ export function TopBar(props: { embed?: boolean; onSaveJson: () => void; onLoadJ
     ed.state.subgraph ? ed.state.doc.customNodes.find((s) => s.id === ed.state.subgraph!.subgraphId) : undefined,
   );
   return (
-    <div class="@container absolute top-0 right-0 left-0 z-20 flex h-10 items-center gap-3 border-b bg-card/90 px-3 backdrop-blur" data-ui>
+    <div class="@container absolute top-0 right-0 left-0 z-20 flex h-10 items-center gap-3 rounded-md border-b bg-card px-3" data-ui>
       <A href="/dashboard" aria-label="Go to dashboard" class="shrink-0">
         <Logo />
       </A>
-      <div class="h-5 w-px bg-border" />
+      <div class="mx-1 h-4 w-px shrink-0 bg-border" />
       <Show
         when={!ed.state.subgraph}
         fallback={
@@ -98,7 +98,7 @@ export function TopBar(props: { embed?: boolean; onSaveJson: () => void; onLoadJ
             if (v !== ed.state.doc.name) ed.mutate((d) => void (d.name = v), { history: false, recompile: false });
           }}
         />
-        <div class="flex h-7 items-center rounded-md bg-muted p-0.5 text-[11px]">
+        <div class="flex h-[30px] shrink-0 items-center rounded-md border p-0.5 text-[11px]">
           <For each={["material", "post"] as const}>
             {(g) => (
               <button
@@ -133,7 +133,7 @@ export function TopBar(props: { embed?: boolean; onSaveJson: () => void; onLoadJ
         type="button"
         title="More options"
         aria-label="More options"
-        class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
         onClick={(e) => togglePopover(menu(), setMenu, e)}
       >
         <Icon svg={Ellipsis} class="size-4" />
@@ -178,7 +178,7 @@ function SaveBadge() {
   return (
     <span
       class={[
-        "rounded-full border px-2.5 py-0.5 text-[10px] font-medium",
+        "shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap",
         ed.state.saveState === "saved"
           ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
           : ed.state.saveState === "error"
@@ -220,7 +220,7 @@ export function Toolbar() {
   const k = (name: keyof typeof SHORTCUTS) => SHORTCUTS[name].display;
   return (
     <Show when={!ed.state.subgraph} fallback={<SubgraphBar />}>
-    <div class="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border bg-card/95 p-1 shadow-lg backdrop-blur" data-ui>
+    <div class="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1.5 shadow-lg backdrop-blur-sm" data-ui>
       <Show when={PAN_MODE_ENABLED}>
         <ToolButton icon={Hand} label={`Pan Mode (${k("pan")})`} active={ed.state.mode === "pan"} onClick={() => ed.setState((s) => void (s.mode = "pan"))} />
         <ToolButton
@@ -229,7 +229,7 @@ export function Toolbar() {
           active={ed.state.mode === "select"}
           onClick={() => ed.setState((s) => void (s.mode = "select"))}
         />
-        <div class="mx-1 h-5 w-px bg-border" />
+        <div class="mx-1 h-4 w-px bg-border" />
       </Show>
       <ToolButton
         icon={Layers}
@@ -239,14 +239,14 @@ export function Toolbar() {
       <ToolButton icon={FileCode2} label={`Create Code Node (${k("codeNode")})`} onClick={() => ed.addNodeAt("code/tsl")} />
       <ToolButton icon={Repeat} label={`Create Loop (${k("loop")})`} onClick={() => ed.createLoop()} />
       <ToolButton icon={Group} label={`Group Nodes (${k("group")})`} disabled={!ed.state.selection.nodes.length} onClick={() => ed.groupSelection()} />
-      <div class="mx-1 h-5 w-px bg-border" />
+      <div class="mx-1 h-4 w-px bg-border" />
       <ToolButton icon={Undo2} label={`Undo (${k("undo")})`} disabled={!ed.state.canUndo} onClick={() => ed.undo()} />
       <ToolButton icon={Redo2} label={`Redo (${k("redo")})`} disabled={!ed.state.canRedo} onClick={() => ed.redo()} />
-      <div class="mx-1 h-5 w-px bg-border" />
+      <div class="mx-1 h-4 w-px bg-border" />
       <ToolButton icon={Scan} label="Fit View" onClick={() => ed.fitView()} />
       <ToolButton icon={Image} label={`Open Image Export (${k("imageExport")})`} onClick={() => ui.openDialog("export")} />
       <ToolButton icon={Code} label={`View Code (${k("viewCode")})`} onClick={() => ui.openDialog("code")} />
-      <div class="mx-1 h-5 w-px bg-border" />
+      <div class="mx-1 h-4 w-px bg-border" />
       <ToolButton
         icon={Sparkles}
         label={`AI Assistant (${k("aiChat")})`}
@@ -273,7 +273,7 @@ function SubgraphBar() {
   const session = () => ed.state.subgraph!;
   return (
     <form
-      class="thin-scroll absolute bottom-3 left-1/2 z-20 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-xl border-2 border-blue-500/70 bg-card/95 p-1.5 shadow-lg backdrop-blur"
+      class="thin-scroll absolute bottom-6 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-xl border-2 border-blue-500/70 bg-card/95 p-1.5 shadow-lg backdrop-blur"
       data-ui
       onSubmit={(e) => {
         e.preventDefault();
@@ -284,11 +284,11 @@ function SubgraphBar() {
       <ToolButton icon={FileCode2} label={`Create Code Node (${k("codeNode")})`} onClick={() => ed.addNodeAt("code/tsl")} />
       <ToolButton icon={Repeat} label={`Create Loop (${k("loop")})`} onClick={() => ed.createLoop()} />
       <ToolButton icon={Group} label={`Group Nodes (${k("group")})`} disabled={!ed.state.selection.nodes.length} onClick={() => ed.groupSelection()} />
-      <div class="mx-1 h-5 w-px bg-border" />
+      <div class="mx-1 h-4 w-px bg-border" />
       <ToolButton icon={Undo2} label={`Undo (${k("undo")})`} disabled={!ed.state.canUndo} onClick={() => ed.undo()} />
       <ToolButton icon={Redo2} label={`Redo (${k("redo")})`} disabled={!ed.state.canRedo} onClick={() => ed.redo()} />
       <ToolButton icon={Scan} label="Fit View" onClick={() => ed.fitView()} />
-      <div class="mx-1 h-5 w-px bg-border" />
+      <div class="mx-1 h-4 w-px bg-border" />
       <Tooltip content={session().isNew ? "Discard this new subgraph (Esc)" : "Discard changes (Esc)"} side="top">
         <button
           type="button"
@@ -368,8 +368,8 @@ export function ContextMenu() {
               Copy
             </MenuItem>
             <MenuItem onSelect={run(() => ed.duplicateSelection())}>Duplicate</MenuItem>
-            <MenuItem onSelect={run(() => ed.updateData(n().id, (x) => (x.data.debug = !x.data.debug), { recompile: false }))}>
-              Toggle Debug Preview
+            <MenuItem onSelect={run(() => ed.updateData(n().id, (x) => (x.data.debug = x.data.debug === false), { recompile: false }))}>
+              Toggle Preview
             </MenuItem>
             <MenuSeparator />
             <MenuItem icon={Group} shortcut={SHORTCUTS.group.display} onSelect={run(() => ed.groupSelection())}>

@@ -222,11 +222,14 @@ export type GeometryKind =
   | "plane"
   | "cylinder"
   | "icosahedron"
+  | "fullscreenQuad"
+  /** @deprecated older docs; the script is now a modifier (`geometryScript`) on any geometry */
   | "script";
 
 export interface PreviewSettings {
   geometry: GeometryKind;
   geometryParams: Record<string, number | boolean>;
+  /** Runs on the built geometry with `geometry` and `THREE` in scope; may mutate it or return a new one. */
   geometryScript?: string;
   environment: string;
   envIntensity: number;

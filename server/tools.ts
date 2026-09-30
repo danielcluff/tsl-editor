@@ -315,7 +315,7 @@ Stops at the first failing op (earlier ops stay applied).`,
   {
     name: "update_preview_settings",
     description:
-      "Change the 3D preview: geometry (sphere|box|torus|torusKnot|plane|cylinder|icosahedron|script), geometryParams, environment (none|apartment|city|dawn|forest|lobby|night|park|studio|sunset|warehouse|...), envIntensity, showBackground, showGrid, enablePost, instancing, instanceCount, and lighting: lightEnabled, lightIntensity, lightColor (hex), lightAzimuth (degrees around Y, 0 = front), lightElevation (degrees above horizon), showLightHelper, ambientIntensity.",
+      "Change the 3D preview: geometry (sphere|box|torus|torusKnot|plane|cylinder|icosahedron|fullscreenQuad), geometryParams, geometryScript (JS run on the built geometry with `geometry` and `THREE` in scope; mutate it or return a new BufferGeometry), environment (none|apartment|city|dawn|forest|lobby|night|park|studio|sunset|warehouse|...), envIntensity, showBackground, showGrid, enablePost, instancing, instanceCount, and lighting: lightEnabled, lightIntensity, lightColor (hex), lightAzimuth (degrees around Y, 0 = front), lightElevation (degrees above horizon), showLightHelper, ambientIntensity.",
     shape: { projectId: projectIdSchema, settings: z.record(z.string(), z.any()) },
     run: async (a) => ok(await runCommand(pid(a), cmd("updateSettings", a))),
   },

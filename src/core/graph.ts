@@ -259,7 +259,40 @@ export type TypeMap = Map<string, { in: Record<string, string>; out: Record<stri
 
 const RANK: Record<string, number> = { bool: 0, int: 1, uint: 1, float: 2, vec2: 3, vec3: 4, color: 4, vec4: 5 };
 
-function literalType(v: unknown): string {
+/** Types an unconnected `any` input can be set to (the original's "Type" picker). */
+export const ANY_VALUE_TYPES = ["float", "vec2", "vec3", "vec4", "color", "bool"] as const;
+export type AnyValueType = (typeof ANY_VALUE_TYPES)[number];
+
+/** Convert a literal to another type, keeping as much of the old value as makes sense. */
+export function convertAnyValue(v: unknown, to: AnyValueType): unknown {
+  const comps = (): number[] => {
+    if (typeof v === "number") return [v];
+    if (typeof v === "boolean") return [v ? 1 : 0];
+    if (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v)) return [1, 3, 5].map((i) => Math.round((parseInt(v.slice(i, i + 2), 16) / 255) * 1000) / 1000);
+    if (Array.isArray(v)) return v.map((x) => Number(x) || 0);
+    return [0];
+  };
+  const c = comps();
+  switch (to) {
+    case "float":
+      return c[0] ?? 0;
+    case "bool":
+      return c.some((x) => x !== 0);
+    case "color": {
+      if (typeof v === "string" && v.startsWith("#")) return v;
+      const rgb = c.length === 1 ? [c[0], c[0], c[0]] : [c[0] ?? 0, c[1] ?? 0, c[2] ?? 0];
+      return "#" + rgb.map((x) => Math.round(Math.min(1, Math.max(0, x)) * 255).toString(16).padStart(2, "0")).join("");
+    }
+    default: {
+      const n = Number(to.slice(-1));
+      // a scalar fills every component (vec3(1) === vec3(1, 1, 1)), a vector is padded with 0s
+      return Array.from({ length: n }, (_, i) => (c.length === 1 ? c[0] : (c[i] ?? 0)));
+    }
+  }
+}
+
+/** The type a literal value compiles to when its input accepts `any`. */
+export function literalType(v: unknown): string {
   if (typeof v === "number") return "float";
   if (typeof v === "boolean") return "bool";
   if (typeof v === "string" && v.startsWith("#")) return "color";
@@ -519,4 +552,12 @@ export function nodeTitle(doc: ProjectDoc, node: GraphNode): string {
 
 export function nodeCount(doc: ProjectDoc): number {
   return doc.graphs.material.nodes.length + doc.graphs.post.nodes.length;
+}
+
+const NO_PREVIEW_KINDS = new Set(["comment", "group", "loop", "material", "postOutput", "placeholder", "subgraphInput", "subgraphOutput"]);
+
+/** Whether nodes of this type produce a value that can be shown as a preview thumbnail. */
+export function hasPreview(type: string): boolean {
+  const def = getNodeDef(type);
+  return !!def && def.outputs.length > 0 && !NO_PREVIEW_KINDS.has(def.kind ?? "");
 }

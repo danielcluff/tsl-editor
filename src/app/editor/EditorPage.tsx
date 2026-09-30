@@ -174,16 +174,19 @@ function EditorShell(props: { doc: ProjectDoc; persist: boolean; embed: boolean 
   return (
     <EditorContext value={ed}>
       <ChatContext value={chat}>
-      <div class="fixed inset-0 flex gap-2 bg-background p-2 text-foreground">
-        <Sidebar />
-        <div class="relative min-w-0 flex-1 overflow-hidden rounded-lg border">
-          <Canvas />
+      {/* like the original: the canvas fills the window and the panels float over it */}
+      <div class="fixed inset-0 overflow-hidden bg-background text-foreground">
+        <Canvas />
+        <div class="pointer-events-none absolute inset-4 flex gap-2">
+        <div class="relative h-full shrink-0 *:pointer-events-auto">
+          <Sidebar />
+        </div>
+        <div class="relative min-w-0 flex-1 *:pointer-events-auto">
           <TopBar embed={props.embed} onSaveJson={saveJson} onLoadJson={loadJson} />
-          <Toolbar />
           <FindBar />
           <AIChat />
         </div>
-        <div class="flex w-[300px] shrink-0 flex-col gap-2">
+        <div class="pointer-events-auto flex w-72 shrink-0 flex-col gap-2">
           <PreviewPanel
             onReady={(p) => {
               ed.previewHooks.setUniform = (key, value) => p.setUniform(key, value);
@@ -192,6 +195,10 @@ function EditorShell(props: { doc: ProjectDoc; persist: boolean; embed: boolean 
             }}
           />
           <Inspector />
+        </div>
+        </div>
+        <div class="pointer-events-none absolute inset-0 *:pointer-events-auto">
+          <Toolbar />
         </div>
       </div>
       <NodePicker />

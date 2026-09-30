@@ -324,8 +324,12 @@ const MESH: Record<string, GeometryKind> = {
   plane: "plane",
   cylinder: "cylinder",
   icosahedron: "icosahedron",
-  custom: "script",
-  script: "script",
+  fullscreenQuad: "fullscreenQuad",
+  fullscreenquad: "fullscreenQuad",
+  quad: "fullscreenQuad",
+  // their custom mesh is a script on top of a base geometry
+  custom: "sphere",
+  script: "sphere",
 };
 
 function convertSettings(src: Record<string, unknown> | undefined, report: ImportReport): Partial<PreviewSettings> {
@@ -345,7 +349,7 @@ function convertSettings(src: Record<string, unknown> | undefined, report: Impor
   };
   out.geometryParams = {
     sphere: () => pick({ radius: "radius", widthSegments: "widthSegmentsSphere", heightSegments: "heightSegmentsSphere" }),
-    box: () => pick({ width: "width", height: "height", depth: "depth", segments: "widthSegments" }),
+    box: () => pick({ width: "width", height: "height", depth: "depth", widthSegments: "widthSegments", heightSegments: "heightSegments", depthSegments: "depthSegments" }),
     torus: () => pick({ radius: "radiusTorus", tube: "tube", radialSegments: "radialSegments", tubularSegments: "tubularSegments" }),
     torusKnot: () => pick({ radius: "radiusTorus", tube: "tube", radialSegments: "radialSegments", tubularSegments: "tubularSegments" }),
     plane: () => pick({ width: "widthPlane", height: "heightPlane", widthSegments: "widthSegmentsPlane", heightSegments: "heightSegmentsPlane" }),
@@ -359,6 +363,7 @@ function convertSettings(src: Record<string, unknown> | undefined, report: Impor
         openEnded: "openEnded",
       }),
     icosahedron: () => pick({ radius: "radius" }),
+    fullscreenQuad: () => ({}),
     script: () => ({}),
   }[out.geometry]();
   if (typeof src.geometryScript === "string" && src.geometryScript) out.geometryScript = src.geometryScript;
