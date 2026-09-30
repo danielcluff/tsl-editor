@@ -1,7 +1,8 @@
 import { For, Match, Show, Switch as SwitchFlow, createMemo, createSignal, useContext } from "solid-js";
 import { Code2, Layers, Pencil, Plus, Trash2, Upload, Waypoints } from "lucide-static";
 import { defaultGlobalValue } from "../../core/commands";
-import { ANY_VALUE_TYPES, convertAnyValue, findSubgraph, literalType, nodeTitle, resolvePorts, uid, type AnyValueType } from "../../core/graph";
+import { multiOpHandleId, multiOpInfo, multiOpParams } from "../../core/multiop";
+import { ANY_VALUE_TYPES, LOOP_COMPARES, LOOP_MODES, convertAnyValue, findSubgraph, literalType, loopModeOf, nodeTitle, resolvePorts, uid, type AnyValueType, type LoopMode } from "../../core/graph";
 import { getNodeDef, typeColor } from "../../core/registry";
 import type { GlobalDef, GraphNode, PortDef } from "../../core/types";
 import {
@@ -250,9 +251,11 @@ function Properties() {
             <Button size="xs" variant="outline" onClick={() => ed.createSubgraph()}>
               <Icon svg={Layers} class="size-3" /> Create Subgraph
             </Button>
-            <Button size="xs" variant="outline" onClick={() => ed.convertToMultiOp()}>
-              Multi-op
-            </Button>
+            <Show when={ed.selectionChain().valid}>
+              <Button size="xs" variant="outline" onClick={() => ed.convertToMultiOp()}>
+                Convert to Multi-op
+              </Button>
+            </Show>
             <Button size="xs" variant="destructive" onClick={() => ed.deleteSelection()}>
               Delete
             </Button>
@@ -493,33 +496,30 @@ function NodeProperties(props: { node: GraphNode }) {
         </Match>
 
         <Match when={kind() === "multiOp"}>
-          <Section title="Operations">
-            <For each={props.node.data.ops ?? []}>
-              {(op, i) => (
-                <div class="flex items-center gap-2">
-                  <span class="w-6 font-mono text-[10px] text-muted-foreground">{String.fromCharCode(66 + i())}</span>
-                  <Select
-                    value={op.op}
-                    options={["add", "sub", "mul", "div", "mod", "pow", "min", "max"].map((o) => ({ label: o, value: o }))}
-                    onChange={(v) => update((n) => (n.data.ops![i()] = { op: v as typeof op.op }))}
-                  />
-                  <button
-                    type="button"
-                    class="text-muted-foreground hover:text-destructive disabled:opacity-30"
-                    disabled={(props.node.data.ops?.length ?? 0) <= 1}
-                    onClick={() => update((n) => n.data.ops!.splice(i(), 1))}
-                    aria-label="Remove operation"
-                  >
-                    <Icon svg={Trash2} class="size-3.5" />
-                  </button>
+          {/* one box per operation, like the original's "Step N · Op" sections */}
+          <div class="flex flex-col gap-4 p-4">
+            <For each={props.node.data.operations ?? []} fallback={<div class="text-xs text-muted-foreground">No operations yet.</div>}>
+              {(o, i) => (
+                <div class="flex flex-col gap-2">
+                  <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                    Step {i() + 1} · {multiOpInfo(o.op)?.label ?? o.op}
+                  </span>
+                  <div class="rounded-lg border p-3">
+                    <InputsSection
+                      bare
+                      node={props.node}
+                      ports={multiOpParams(o.op, i() === 0).map((p) => ({ ...p, key: multiOpHandleId(o.id, p.key) }))}
+                      connected={connected()}
+                      editor={inputEditor}
+                    />
+                    <Show when={!multiOpParams(o.op, i() === 0).length}>
+                      <div class="text-xs text-muted-foreground">Takes the previous result; no other inputs.</div>
+                    </Show>
+                  </div>
                 </div>
               )}
             </For>
-            <Button size="xs" variant="outline" onClick={() => update((n) => (n.data.ops = [...(n.data.ops ?? []), { op: "add" }]))}>
-              <Icon svg={Plus} class="size-3" /> Add operand
-            </Button>
-          </Section>
-          <InputsSection node={props.node} ports={ports().inputs} connected={connected()} editor={inputEditor} />
+          </div>
         </Match>
 
         <Match when={kind() === "gradient"}>
@@ -576,10 +576,7 @@ function NodeProperties(props: { node: GraphNode }) {
               <Input value={props.node.data.label ?? ""} onBlur={(e) => update((n) => (n.data.label = e.currentTarget.value || undefined), false)} />
             </Field>
             <Show when={kind() === "loop"}>
-              <p class="text-[11px] leading-relaxed text-muted-foreground">
-                Put Count (or Start + End), Index, Accumulator and Output nodes inside the frame. The Output's value feeds the
-                accumulator each iteration; its OUT port outside the loop is the final value.
-              </p>
+              <LoopSettings node={props.node} />
             </Show>
           </Section>
         </Match>
@@ -609,12 +606,17 @@ function InputsSection(props: {
   ports: PortDef[];
   connected: Set<string>;
   editor: (p: PortDef) => unknown;
+  /** Just the fields, for embedding (no padding or empty message). */
+  bare?: boolean;
 }) {
   const ed = useContext(EditorContext);
   const types = () => ed.types().get(props.node.id)?.in ?? {};
   return (
-    <Show when={props.ports.length} fallback={<div class="px-3 py-4 text-xs text-muted-foreground">This node has no editable inputs.</div>}>
-      <div class="flex flex-col gap-4 p-4">
+    <Show
+      when={props.ports.length}
+      fallback={<Show when={!props.bare}><div class="px-3 py-4 text-xs text-muted-foreground">This node has no editable inputs.</div></Show>}
+    >
+      <div class={["flex flex-col gap-4", { "p-4": !props.bare }]}>
         <For each={props.ports}>
           {(p) => (
             <div class="flex flex-col gap-1.5">
@@ -1165,5 +1167,49 @@ function Globals() {
         </div>
       </Show>
     </div>
+  );
+}
+
+const LOOP_HELP: Record<LoopMode, string> = {
+  count: "Runs Count times; Index goes 0 … Count − 1.",
+  range: "Index runs from Start toward End while the comparison holds.",
+  reverse: "Index counts down from Start − 1 to 0.",
+  nested: "Runs Count × Count 2 times; Index and Index 2 are the two loop indices.",
+  condition: "Runs while Condition is true (a while loop). Build the condition from the accumulator so it can end.",
+};
+
+function LoopSettings(props: { node: GraphNode }) {
+  const ed = useContext(EditorContext);
+  const mode = () => loopModeOf(props.node, ed.graph().nodes.filter((n) => n.parentId === props.node.id));
+  const set = (key: string, v: string) => ed.setValue(props.node.id, key, v);
+  return (
+    <>
+      <Field label="Mode">
+        <Select value={mode()} options={LOOP_MODES} onChange={(v) => ed.setLoopMode(props.node.id, v as LoopMode)} />
+      </Field>
+      <Show when={mode() === "range" || mode() === "reverse"}>
+        <Field label="Type">
+          <Select
+            value={props.node.data.values.loopType === "float" ? "float" : "int"}
+            options={[
+              { label: "Int", value: "int" },
+              { label: "Float", value: "float" },
+            ]}
+            onChange={(v) => set("loopType", v)}
+          />
+        </Field>
+        <Field label="Compare">
+          <Select
+            value={String(props.node.data.values.loopCompare ?? (mode() === "reverse" ? ">" : "<"))}
+            options={LOOP_COMPARES.map((c) => ({ label: c, value: c }))}
+            onChange={(v) => set("loopCompare", v)}
+          />
+        </Field>
+      </Show>
+      <p class="text-[11px] leading-relaxed text-muted-foreground">
+        {LOOP_HELP[mode()]} Wire the next value into Output; the Accumulator holds the running value, and Output's port outside the
+        loop is the result.
+      </p>
+    </>
   );
 }

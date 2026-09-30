@@ -1,10 +1,12 @@
 import { componentCount, getNodeDef, visibleSplitOutputs } from "./registry";
+import { migrateLegacyMultiOps, multiOpHandleId, multiOpInfo, multiOpInputs, multiOpParams, newMultiOpId } from "./multiop";
 import type {
   GlobalDef,
   Graph,
   GraphEdge,
   GraphKind,
   GraphNode,
+  MultiOpOperation,
   GraphRef,
   NodeData,
   NodeDef,
@@ -50,6 +52,7 @@ export function defaultSettings(): PreviewSettings {
     lightElevation: 45,
     showLightHelper: false,
     ambientIntensity: 1.2,
+    nodePreviews: true,
   };
 }
 
@@ -135,10 +138,8 @@ export function makeNode(type: string, position: XY, data: Partial<NodeData> = {
       outputs: [{ key: "out", type: "vec3" }],
     };
   }
-  if (def.kind === "multiOp" && !node.data.ops) {
-    node.data.ops = [{ op: "add" }];
-    node.data.values = { in0: 0, in1: 0 };
-  }
+  // a new multi-op starts with one Add, like the original; its inputs use the defaults
+  if (def.kind === "multiOp" && !node.data.operations) node.data.operations = [{ id: newMultiOpId(), op: "add" }];
   return node;
 }
 
@@ -214,16 +215,9 @@ export function resolvePorts(
       outputs = g ? vecOuts(g.type) : [{ key: "out", label: "Out", type: "any" }];
       break;
     }
-    case "multiOp": {
-      const n = (node.data.ops?.length ?? 1) + 1;
-      inputs = Array.from({ length: n }, (_, i) => ({
-        key: `in${i}`,
-        label: String.fromCharCode(65 + i),
-        type: "any",
-        default: 0,
-      }));
+    case "multiOp":
+      inputs = multiOpInputs(node.data.operations ?? []).map((i) => i.port);
       break;
-    }
     case "split": {
       if (opts.forCanvas) {
         const inType = opts.types?.get(node.id)?.in?.in ?? "vec4";
@@ -314,6 +308,25 @@ function widest(types: string[]): string {
 }
 
 /** Resolve effective types of every handle, propagating through `any` ports. */
+/** Result type of a multi-op: each step's declared type, else the widest of its inputs. */
+function multiOpResultType(operations: MultiOpOperation[], inTypes: Record<string, string>): string {
+  let prev = "any";
+  operations.forEach((o, i) => {
+    const info = multiOpInfo(o.op);
+    if (!info) return;
+    const params = multiOpParams(o.op, i === 0).map((p) => inTypes[multiOpHandleId(o.id, p.key)] ?? p.type);
+    const ins = (i === 0 ? params : [prev, ...params]).filter((t) => t !== "any");
+    prev = info.outType !== "any" ? info.outType : ins.length ? widest(ins) : "any";
+  });
+  return prev;
+}
+
+/** Bring documents saved by older versions up to date (in place). */
+export function normalizeDoc(doc: ProjectDoc): ProjectDoc {
+  for (const g of [doc.graphs.material, doc.graphs.post, ...(doc.customNodes ?? []).map((s) => s.graph)]) migrateLegacyMultiOps(g);
+  return doc;
+}
+
 export function inferTypes(doc: ProjectDoc, graph: Graph): TypeMap {
   const map: TypeMap = new Map();
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -352,6 +365,8 @@ export function inferTypes(doc: ProjectDoc, graph: Graph): TypeMap {
           t = widest([entry.in.trueVal, entry.in.falseVal]);
         } else if (def?.kind === "split") {
           t = entry.in.in ?? "any";
+        } else if (def?.kind === "multiOp") {
+          t = multiOpResultType(node.data.operations ?? [], entry.in);
         } else {
           const ins = Object.values(entry.in).filter((x) => x !== "any");
           t = ins.length ? widest(ins) : "any";
@@ -408,8 +423,14 @@ export function addNode(
 export function removeNodes(doc: ProjectDoc, graph: GraphRef, ids: string[]): void {
   const g = graphOf(doc, graph);
   const set = new Set(ids);
-  // Deleting a container releases its children.
-  for (const n of g.nodes) if (n.parentId && set.has(n.parentId)) n.parentId = undefined;
+  // Deleting a loop takes its parts with it (they mean nothing on their own);
+  // any other container just releases its children.
+  for (const n of g.nodes) {
+    if (!n.parentId || !set.has(n.parentId)) continue;
+    const parent = g.nodes.find((p) => p.id === n.parentId);
+    if (getNodeDef(parent?.type ?? "")?.kind === "loop" && getNodeDef(n.type)?.kind === "loopPart") set.add(n.id);
+    else n.parentId = undefined;
+  }
   g.nodes = g.nodes.filter((n) => !set.has(n.id));
   g.edges = g.edges.filter((e) => !set.has(e.source) && !set.has(e.target));
 }
@@ -554,10 +575,268 @@ export function nodeCount(doc: ProjectDoc): number {
   return doc.graphs.material.nodes.length + doc.graphs.post.nodes.length;
 }
 
-const NO_PREVIEW_KINDS = new Set(["comment", "group", "loop", "material", "postOutput", "placeholder", "subgraphInput", "subgraphOutput"]);
+const NO_PREVIEW_KINDS = new Set(["comment", "group", "loop", "loopPart", "material", "postOutput", "placeholder", "subgraphInput", "subgraphOutput"]);
 
 /** Whether nodes of this type produce a value that can be shown as a preview thumbnail. */
 export function hasPreview(type: string): boolean {
   const def = getNodeDef(type);
   return !!def && def.outputs.length > 0 && !NO_PREVIEW_KINDS.has(def.kind ?? "");
+}
+
+/** Whether a node's preview is shown: its own override, else the project default. */
+export function nodePreviewOn(doc: ProjectDoc, node: GraphNode): boolean {
+  return node.data.debug ?? doc.settings.nodePreviews !== false;
+}
+
+/** Set the project default and drop every per-node override so all nodes follow it. */
+export function setNodePreviewDefault(doc: ProjectDoc, on: boolean): void {
+  doc.settings.nodePreviews = on;
+  const graphs = [doc.graphs.material, doc.graphs.post, ...doc.customNodes.map((sg) => sg.graph)];
+  for (const g of graphs) for (const n of g.nodes) delete n.data.debug;
+}
+
+// ---------------------------------------------------------------------------
+// loops (modes and parts, matching the original)
+// ---------------------------------------------------------------------------
+
+export type LoopMode = "count" | "range" | "reverse" | "nested" | "condition";
+
+export const LOOP_MODES: { value: LoopMode; label: string }[] = [
+  { value: "count", label: "Count" },
+  { value: "range", label: "Range" },
+  { value: "reverse", label: "Reverse" },
+  { value: "nested", label: "Nested" },
+  { value: "condition", label: "Condition" },
+];
+
+export const LOOP_COMPARES = ["<", "<=", ">", ">="] as const;
+
+/** Parts each mode needs besides the accumulator and output. */
+const LOOP_MODE_PARTS: Record<LoopMode, string[]> = {
+  count: ["loop/count", "loop/index"],
+  range: ["loop/start", "loop/end", "loop/index"],
+  reverse: ["loop/start", "loop/index"],
+  nested: ["loop/count", "loop/count2", "loop/index", "loop/index2"],
+  condition: ["loop/condition"],
+};
+
+/** Top-to-bottom order of the parts in the loop's left column. */
+const LOOP_COLUMN = ["loop/count", "loop/count2", "loop/start", "loop/end", "loop/condition", "loop/index", "loop/index2", "loop/accumulator"];
+
+export const LOOP_PART_TYPES = new Set([...LOOP_COLUMN, "loop/output"]);
+
+/** A loop's mode; projects saved before modes existed are inferred from their parts. */
+export function loopModeOf(loop: GraphNode, children: GraphNode[]): LoopMode {
+  const m = loop.data.values.loopMode;
+  if (typeof m === "string" && m in LOOP_MODE_PARTS) return m as LoopMode;
+  const has = (t: string) => children.some((c) => c.type === t);
+  if (has("loop/count2")) return "nested";
+  if (has("loop/start") && has("loop/end")) return "range";
+  if (has("loop/start")) return "reverse";
+  if (has("loop/condition") && !has("loop/count")) return "condition";
+  return "count";
+}
+
+/**
+ * Set a loop's mode and make its parts match: adds the parts the mode needs,
+ * removes the ones it doesn't (with their wires) and restacks the left column.
+ * Returns the loop's parts by type.
+ */
+export function setLoopMode(doc: ProjectDoc, graph: GraphRef, loopId: string, mode: LoopMode): Record<string, string> {
+  const g = graphOf(doc, graph);
+  const loop = g.nodes.find((n) => n.id === loopId);
+  if (!loop || getNodeDef(loop.type)?.kind !== "loop") throw new Error(`"${loopId}" is not a loop`);
+  loop.data.values.loopMode = mode;
+  const wanted = new Set([...LOOP_MODE_PARTS[mode], "loop/accumulator", "loop/output"]);
+  const children = () => g.nodes.filter((n) => n.parentId === loop.id);
+  removeNodes(
+    doc,
+    graph,
+    children()
+      .filter((c) => LOOP_PART_TYPES.has(c.type) && !wanted.has(c.type))
+      .map((c) => c.id),
+  );
+  const width = loop.width ?? 560;
+  let output = children().find((c) => c.type === "loop/output");
+  for (const type of wanted) {
+    if (children().some((c) => c.type === type)) continue;
+    const part = addNode(doc, graph, type, { x: loop.position.x + 32, y: loop.position.y + 32 });
+    part.parentId = loop.id;
+    if (type === "loop/output") {
+      part.position = { x: loop.position.x + width - 200, y: loop.position.y + 32 };
+      output = part;
+    }
+  }
+  // left column, evenly spaced; grow the loop if the column doesn't fit
+  const column = LOOP_COLUMN.map((t) => children().find((c) => c.type === t)).filter(Boolean) as GraphNode[];
+  column.forEach((c, i) => (c.position = { x: loop.position.x + 32, y: loop.position.y + 32 + i * 72 }));
+  loop.height = Math.max(loop.height ?? 320, 32 + column.length * 72 + 24);
+  // a fresh output starts wired to the accumulator, like a new loop
+  const acc = children().find((c) => c.type === "loop/accumulator");
+  if (acc && output && !g.edges.some((e) => e.target === output!.id && e.targetHandle === "next"))
+    connect(doc, graph, { source: acc.id, sourceHandle: "acc", target: output.id, targetHandle: "next" });
+  return Object.fromEntries(children().filter((c) => LOOP_PART_TYPES.has(c.type)).map((c) => [c.type, c.id]));
+}
+
+/** A new loop with the parts for `mode`. */
+export function createLoop(doc: ProjectDoc, graph: GraphRef, position: XY, mode: LoopMode = "count"): { loop: GraphNode; parts: Record<string, string> } {
+  const loop = addNode(doc, graph, "loop", position);
+  loop.width = 560;
+  loop.height = 320;
+  return { loop, parts: setLoopMode(doc, graph, loop.id, mode) };
+}
+
+// ---------------------------------------------------------------------------
+// surface-uniform outputs
+// ---------------------------------------------------------------------------
+
+/** Categories whose nodes only transform their inputs (no per-pixel sources of their own). */
+const PURE_CATEGORIES = new Set(["Math", "Logic", "Easing", "Constants"]);
+
+/**
+ * Whether a node's output is the same for every pixel of the surface: everything
+ * upstream is a constant, a uniform, time, or pure math/logic over those. Anything
+ * else (UVs, positions, textures, noise, subgraphs, loops…) might vary, so this errs
+ * towards `false`. Values can still change over time (e.g. sin(time)).
+ */
+export function isUniformAcrossSurface(doc: ProjectDoc, graph: Graph, nodeId: string): boolean {
+  return uniformAcrossSurface(doc, graph).get(nodeId) ?? false;
+}
+
+/** isUniformAcrossSurface for every node at once (one pass, shared results). */
+export function uniformAcrossSurface(doc: ProjectDoc, graph: Graph): Map<string, boolean> {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const sources = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    const list = sources.get(e.target) ?? [];
+    list.push(e.source);
+    sources.set(e.target, list);
+  }
+  const memo = new Map<string, boolean>();
+  const visit = (id: string): boolean => {
+    const known = memo.get(id);
+    if (known !== undefined) return known;
+    memo.set(id, false); // cycles count as varying
+    const node = byId.get(id);
+    const def = node && getNodeDef(node.type);
+    let ok = false;
+    if (node && def) {
+      const upstream = () => (sources.get(id) ?? []).every(visit);
+      if (def.kind === "globalRef") ok = findGlobal(doc, node.data.globalId)?.kind !== "varying";
+      else if (def.kind === "localGet") ok = !!node.data.localSourceId && visit(node.data.localSourceId);
+      else if (
+        node.type === "geo/time" ||
+        def.kind === "uniform" ||
+        def.kind === "multiOp" ||
+        def.kind === "localSet" ||
+        def.kind === "const" ||
+        (PURE_CATEGORIES.has(def.category) && (def.kind ?? "standard") === "standard")
+      )
+        ok = upstream();
+    }
+    memo.set(id, ok);
+    return ok;
+  };
+  for (const n of graph.nodes) visit(n.id);
+  return memo;
+}
+
+/**
+ * A string per node that changes whenever anything that can affect its value changes:
+ * the node's own data, its wiring and everything upstream (plus globals and subgraph
+ * definitions, which any node may use). Layout and cosmetic fields are left out, so
+ * moving or renaming nodes keeps signatures stable. Used to reuse preview shaders.
+ */
+export function nodeSignatures(doc: ProjectDoc, graph: Graph): Map<string, string> {
+  const salt = JSON.stringify([doc.globals, doc.customNodes.map((s) => [s.id, s.inputs, s.outputs, s.graph.nodes.map((n) => [n.id, n.type, dataSig(n)]), s.graph.edges])]);
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const incoming = new Map<string, GraphEdge[]>();
+  for (const e of graph.edges) {
+    const list = incoming.get(e.target) ?? [];
+    list.push(e);
+    incoming.set(e.target, list);
+  }
+  const out = new Map<string, string>();
+  const visiting = new Set<string>();
+  const sig = (id: string): string => {
+    const known = out.get(id);
+    if (known !== undefined) return known;
+    const n = byId.get(id);
+    if (!n || visiting.has(id)) return `?${id}`;
+    visiting.add(id);
+    const ins = (incoming.get(id) ?? [])
+      .map((e) => `${e.targetHandle}<${e.sourceHandle}:${sig(e.source)}`)
+      .sort();
+    const extra = n.data.localSourceId ? sig(n.data.localSourceId) : "";
+    visiting.delete(id);
+    const s = `${n.type}${dataSig(n)}[${ins.join(",")}]${extra}`;
+    out.set(id, s);
+    return s;
+  };
+  for (const n of graph.nodes) sig(n.id);
+  for (const [id, s] of out) out.set(id, hashString(salt + s));
+  return out;
+}
+
+/** Node data that affects its value (no preview toggle, label or collapse state). */
+function dataSig(n: GraphNode): string {
+  const { debug: _d, label: _l, collapsed: _c, ...rest } = n.data;
+  return JSON.stringify([rest, n.parentId]);
+}
+
+/** Short stable hash (two 32-bit FNV-1a variants plus length) so signatures stay small. */
+function hashString(s: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ s.length;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x5bd1e995) ^ (b >>> 13);
+  }
+  return `${(a >>> 0).toString(36)}.${(b >>> 0).toString(36)}.${s.length.toString(36)}`;
+}
+
+/**
+ * Nodes whose output can change from frame to frame on its own: something upstream is
+ * the Time node, a node with a `time` input left to its default (tsl-textures use the
+ * live time uniform then), a code node (arbitrary TSL) or a subgraph containing any of
+ * these. Everything else only changes when the graph or a uniform does.
+ */
+export function animatedNodes(doc: ProjectDoc, graph: Graph, seenSubgraphs = new Set<string>()): Set<string> {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const sources = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    const list = sources.get(e.target) ?? [];
+    list.push(e.source);
+    sources.set(e.target, list);
+  }
+  const wired = new Set(graph.edges.map((e) => `${e.target}:${e.targetHandle}`));
+  const selfAnimated = (n: GraphNode): boolean => {
+    const def = getNodeDef(n.type);
+    if (!def) return false;
+    if (n.type === "geo/time" || def.kind === "code") return true;
+    if (def.inputs.some((i) => i.key.toLowerCase() === "time" && !wired.has(`${n.id}:${i.key}`) && n.data.values[i.key] === undefined)) return true;
+    if (def.kind === "subgraph" && n.data.subgraphId && !seenSubgraphs.has(n.data.subgraphId)) {
+      const sg = doc.customNodes.find((s) => s.id === n.data.subgraphId);
+      if (!sg) return false;
+      seenSubgraphs.add(sg.id);
+      const inner = animatedNodes(doc, sg.graph, seenSubgraphs).size > 0;
+      seenSubgraphs.delete(sg.id);
+      return inner;
+    }
+    return false;
+  };
+  const memo = new Map<string, boolean>();
+  const visit = (id: string): boolean => {
+    const known = memo.get(id);
+    if (known !== undefined) return known;
+    memo.set(id, false);
+    const n = byId.get(id);
+    const v = !!n && (selfAnimated(n) || (sources.get(id) ?? []).some(visit) || (!!n.data.localSourceId && visit(n.data.localSourceId)));
+    memo.set(id, v);
+    return v;
+  };
+  const out = new Set<string>();
+  for (const n of graph.nodes) if (visit(n.id)) out.add(n.id);
+  return out;
 }

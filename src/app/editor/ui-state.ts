@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import type { XY } from "../../core/types";
+import type { DebugStats } from "../../runtime/preview";
 
 // Transient editor UI state shared between canvas, toolbar and dialogs.
 
@@ -30,6 +31,11 @@ const [debugVersion, setDebugVersion] = createSignal(0);
 const [previewExpanded, setPreviewExpanded] = createSignal(false);
 
 const debugCanvases = new Map<string, HTMLCanvasElement>();
+/** Latest preview value stats per node (only replaced when the summary changes). */
+const [debugStats, setDebugStatsSignal] = createSignal<Record<string, DebugStats>>({});
+/** Raw preview pixels per node (RGBA floats, top row first) for hover readouts; not reactive. */
+const debugPixels = new Map<string, Float32Array>();
+const statsKey = (s: DebugStats) => `${s.type}|${s.constant}|${s.min.map((v) => v.toPrecision(6))}|${s.max.map((v) => v.toPrecision(6))}`;
 let toastId = 0;
 
 export const ui = {
@@ -80,6 +86,13 @@ export const ui = {
 
   debugVersion,
   debugCanvases,
+  debugStats,
+  debugPixels,
+  setDebugStats: (id: string, stats: DebugStats, pixels: Float32Array) => {
+    debugPixels.set(id, pixels);
+    const prev = debugStats()[id];
+    if (!prev || statsKey(prev) !== statsKey(stats)) setDebugStatsSignal((all) => ({ ...all, [id]: stats }));
+  },
   registerDebugCanvas: (id: string, canvas: HTMLCanvasElement) => {
     debugCanvases.set(id, canvas);
     // called from a ref during render: signal after the render pass

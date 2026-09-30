@@ -74,6 +74,13 @@ function place(anchor: DOMRect, el: HTMLElement, side: Side, align: "start" | "c
   const r = el.getBoundingClientRect();
   let x = 0;
   let y = 0;
+  // flip to the other side when this one doesn't fit but that one does
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  if (side === "bottom" && anchor.bottom + gap + r.height > vh - 6 && anchor.top - gap - r.height >= 6) side = "top";
+  else if (side === "top" && anchor.top - gap - r.height < 6 && anchor.bottom + gap + r.height <= vh - 6) side = "bottom";
+  else if (side === "right" && anchor.right + gap + r.width > vw - 6 && anchor.left - gap - r.width >= 6) side = "left";
+  else if (side === "left" && anchor.left - gap - r.width < 6 && anchor.right + gap + r.width <= vw - 6) side = "right";
   if (side === "top" || side === "bottom") {
     y = side === "top" ? anchor.top - r.height - gap : anchor.bottom + gap;
     x =

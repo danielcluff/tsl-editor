@@ -1,8 +1,10 @@
-import { For, Show, createEffect, createSignal, onSettled, snapshot, useContext } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onSettled, snapshot, untrack, useContext } from "solid-js";
 import { Camera, CircleAlert, Crosshair, Maximize2, Minimize2, SlidersHorizontal } from "lucide-static";
 import type { GeometryKind, GraphKind, PreviewSettings } from "../../core/types";
-import { hasPreview, resolveSettings } from "../../core/graph";
+import { animatedNodes, hasPreview, nodePreviewOn, nodeSignatures, resolveSettings } from "../../core/graph";
+import { getNodeDef } from "../../core/registry";
 import { ENVIRONMENTS, PreviewRenderer } from "../../runtime/preview";
+import { LIVE_PREVIEW_ZOOM } from "../../runtime/preview-size";
 import { Button, Dialog, Icon, NumberField, Popover, Select, Slider, Switch, Tooltip, togglePopover, type PopoverAnchor } from "../ui";
 import { CodeEditor } from "./CodeEditor";
 import { EditorContext } from "./store";
@@ -77,6 +79,9 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
     preview = new PreviewRenderer(host, resolveSettings(snapshot(ed.state.doc.settings) as PreviewSettings));
     if (import.meta.env.DEV) (window as unknown as { __tslPreview: unknown }).__tslPreview = preview;
     preview.onError = (errs) => ed.setState((s) => void (s.runtimeErrors = errs));
+    preview.onDebugStats = (id, stats, pixels) => ui.setDebugStats(id, stats, pixels);
+    preview.setDebugLive(untrack(livePreviews));
+    preview.setMainAnimated(untrack(mainAnimated));
     preview.ready
       .then(() => {
         setReady(true);
@@ -134,7 +139,9 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
     () => [ed.compiled(), ready(), ed.state.doc.settings.enablePost] as const,
     ([result, isReady, enablePost]) => {
       if (!result || !isReady || !preview) return;
-      const errors = preview.apply(result.runtime.material, result.post.connected && enablePost ? result.runtime.post : null);
+      // per-node signatures let unchanged previews keep their shaders across recompiles
+      const signatures = untrack(() => nodeSignatures(ed.state.doc, ed.state.doc.graphs.material));
+      const errors = preview.apply(result.runtime.material, result.post.connected && enablePost ? result.runtime.post : null, signatures);
       ed.setState((s) => void (s.runtimeErrors = errors));
     },
   );
@@ -148,6 +155,23 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
     },
   );
 
+  // The main view only redraws every frame when what it shows can change by itself: the
+  // material depends on time (or similar), or post-processing runs effects (some, like
+  // afterimage or TRAA, depend on previous frames, so any effect counts). Otherwise it
+  // redraws on edits and camera movement only.
+  const mainAnimated = createMemo(() => {
+    const doc = ed.state.doc;
+    const mat = doc.graphs.material.nodes.find((n) => getNodeDef(n.type)?.kind === "material");
+    if (mat && animatedNodes(doc, doc.graphs.material).has(mat.id)) return true;
+    if (!doc.settings.enablePost) return false;
+    return doc.graphs.post.nodes.some((n) => !["postInput", "postOutput", "comment", "group"].includes(getNodeDef(n.type)?.kind ?? ""));
+  });
+  createEffect(mainAnimated, (animated) => preview?.setMainAnimated(animated));
+
+  // node previews animate only when zoomed in enough to read them (see LIVE_PREVIEW_ZOOM)
+  const livePreviews = () => ed.viewport().zoom >= LIVE_PREVIEW_ZOOM;
+  createEffect(livePreviews, (live) => preview?.setDebugLive(live));
+
   // debug thumbnails
   createEffect(
     () => {
@@ -155,15 +179,21 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
       if (ed.state.graph !== "material") return [];
       return ed
         .graph()
-        .nodes.filter((n) => n.data.debug !== false && hasPreview(n.type))
-        .map((n) => ({ id: n.id, type: ed.types().get(n.id)?.out.out ?? Object.values(ed.types().get(n.id)?.out ?? {})[0] ?? "vec3" }));
+        .nodes.filter((n) => nodePreviewOn(ed.state.doc, n) && hasPreview(n.type))
+        .map((n) => ({
+          id: n.id,
+          type: ed.types().get(n.id)?.out.out ?? Object.values(ed.types().get(n.id)?.out ?? {})[0] ?? "vec3",
+          // math nodes show a value readout (see NodeCard)
+          values: getNodeDef(n.type)?.category === "Math",
+          animated: ed.animated().has(n.id),
+        }));
     },
     (list) => {
       if (!preview) return;
-      const map = new Map<string, { canvas: HTMLCanvasElement; type: string }>();
+      const map = new Map<string, { canvas: HTMLCanvasElement; type: string; values?: boolean; animated?: boolean }>();
       for (const d of list) {
         const c = ui.debugCanvases.get(d.id);
-        if (c?.isConnected) map.set(d.id, { canvas: c, type: d.type });
+        if (c?.isConnected) map.set(d.id, { canvas: c, type: d.type, values: d.values, animated: d.animated });
       }
       preview.setDebugTargets(map);
     },

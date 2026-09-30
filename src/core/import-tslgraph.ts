@@ -8,6 +8,7 @@
 
 import { createProject, makeNode, resolvePorts } from "./graph";
 import { getNodeDef } from "./registry";
+import { multiOpInfo, newMultiOpId } from "./multiop";
 import type {
   CodeNodeData,
   GeometryKind,
@@ -189,7 +190,13 @@ function convertGraph(
     const pos = abs(n);
     let node: GraphNode | null = null;
 
-    if (type === "group") {
+    if (n.data?.type === "loop") {
+      // their loops are React Flow group nodes with data.type "loop"; parts come in as its children
+      node = makeNode("loop", pos, typeof values.label === "string" && values.label ? { label: values.label } : {});
+      for (const k of ["loopMode", "loopType", "loopCompare"]) if (typeof values[k] === "string") node.data.values[k] = values[k];
+      node.width = Math.round(num(n.style?.width) ?? num(n.measured?.width) ?? num(n.width) ?? 560);
+      node.height = Math.round(num(n.style?.height) ?? num(n.measured?.height) ?? num(n.height) ?? 320);
+    } else if (type === "group") {
       node = makeNode("utils/group", pos, { label: typeof values.label === "string" ? values.label : undefined });
       node.width = Math.round(num(n.style?.width) ?? num(n.measured?.width) ?? num(n.width) ?? 400);
       node.height = Math.round(num(n.style?.height) ?? num(n.measured?.height) ?? num(n.height) ?? 240);
@@ -198,10 +205,18 @@ function convertGraph(
     } else if (ctx.codeDefs.has(type)) {
       const def = ctx.codeDefs.get(type)!;
       node = makeNode("code/tsl", pos, { code: convertCode(def), label: def.name });
-    } else if (type === "math/multiOp" && n.data?.operations) {
-      // Their multi-op is a chain of arbitrary ops with per-op parameters;
-      // ours is a fold of binary ops over inputs. The two don't map.
-      node = placeholder(n, "Multi-op nodes use a different structure in this editor");
+    } else if (type === "math/multiOp") {
+      // same model as ours: operations [{ id, op }], ports and values keyed op_<id>_<param>
+      const operations = (Array.isArray(n.data?.operations) ? n.data.operations : []) as { id?: unknown; op?: unknown }[];
+      const unknown = operations.map((o) => String(o.op)).filter((op) => !multiOpInfo(op));
+      if (unknown.length) node = placeholder(n, `Multi-op uses operations this editor doesn't have: ${unknown.join(", ")}`);
+      else {
+        node = makeNode("math/multiOp", pos);
+        node.data.operations = operations.map((o, i) => ({ id: typeof o.id === "string" ? o.id : newMultiOpId(i), op: String(o.op) }));
+        node.data.values = {};
+        for (const [k, v] of Object.entries(values)) if (k.startsWith("op_")) node.data.values[k] = v;
+        if (typeof values.localName === "string" && values.localName) node.data.localName = values.localName;
+      }
     } else {
       const def = getNodeDef(type);
       if (!def || def.kind === "placeholder" || def.type === "subgraph/instance" || def.type === "code/tsl") {

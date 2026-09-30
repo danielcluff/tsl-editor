@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { createProject, nodeCount } from "../src/core/graph";
+import { createProject, nodeCount, normalizeDoc } from "../src/core/graph";
 import type { ProjectDoc, ProjectSummary } from "../src/core/types";
 
 const DATA_DIR = resolve(process.env.TSL_DATA_DIR ?? join(process.cwd(), "data"));
@@ -41,7 +41,7 @@ export async function listProjects(): Promise<ProjectSummary[]> {
 
 export async function getProject(id: string): Promise<ProjectDoc | null> {
   try {
-    return JSON.parse(await readFile(file(id), "utf8")) as ProjectDoc;
+    return normalizeDoc(JSON.parse(await readFile(file(id), "utf8")) as ProjectDoc);
   } catch {
     return null;
   }

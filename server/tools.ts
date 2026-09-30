@@ -216,6 +216,10 @@ export const TOOLS: ToolSpec[] = [
       globalId: z.string().optional(),
       localSourceId: z.string().optional(),
       text: z.string().optional().describe("Comment text (utils/comment)"),
+      operations: z
+        .array(z.object({ id: z.string().optional(), op: z.string() }))
+        .optional()
+        .describe("math/multiOp: the chain of operations (TSL names, e.g. sin, mul, add); ports become op_<id>_<key>"),
     },
     run: async (a) => ok(await runCommand(pid(a), cmd("addNode", a))),
   },
@@ -248,7 +252,7 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "update_node",
     description:
-      "Update a node: inline input values, material activeInputs, label, localName, comment text, code-node source/ports, position or container.",
+      "Update a node: inline input values, material activeInputs, label, localName, comment text, code-node source/ports, multi-op operations, position or container.",
     shape: {
       projectId: projectIdSchema,
       graph: graphSchema,
@@ -261,6 +265,10 @@ export const TOOLS: ToolSpec[] = [
       code: codeShape.partial().optional(),
       position: z.object({ x: z.number(), y: z.number() }).optional(),
       parentId: z.string().nullable().optional(),
+      operations: z
+        .array(z.object({ id: z.string().optional(), op: z.string() }))
+        .optional()
+        .describe("math/multiOp: the chain of operations (TSL names, e.g. sin, mul, add); ports become op_<id>_<key>"),
     },
     run: async (a) => ok(await runCommand(pid(a), cmd("updateNode", a))),
   },
@@ -315,7 +323,7 @@ Stops at the first failing op (earlier ops stay applied).`,
   {
     name: "update_preview_settings",
     description:
-      "Change the 3D preview: geometry (sphere|box|torus|torusKnot|plane|cylinder|icosahedron|fullscreenQuad), geometryParams, geometryScript (JS run on the built geometry with `geometry` and `THREE` in scope; mutate it or return a new BufferGeometry), environment (none|apartment|city|dawn|forest|lobby|night|park|studio|sunset|warehouse|...), envIntensity, showBackground, showGrid, enablePost, instancing, instanceCount, and lighting: lightEnabled, lightIntensity, lightColor (hex), lightAzimuth (degrees around Y, 0 = front), lightElevation (degrees above horizon), showLightHelper, ambientIntensity.",
+      "Change the 3D preview: geometry (sphere|box|torus|torusKnot|plane|cylinder|icosahedron|fullscreenQuad), geometryParams, geometryScript (JS run on the built geometry with `geometry` and `THREE` in scope; mutate it or return a new BufferGeometry), environment (none|apartment|city|dawn|forest|lobby|night|park|studio|sunset|warehouse|...), envIntensity, showBackground, showGrid, enablePost, instancing, instanceCount, and lighting: lightEnabled, lightIntensity, lightColor (hex), lightAzimuth (degrees around Y, 0 = front), lightElevation (degrees above horizon), showLightHelper, ambientIntensity, and nodePreviews (default for the preview thumbnails on nodes; setting it through the editor toolbar also clears per-node overrides).",
     shape: { projectId: projectIdSchema, settings: z.record(z.string(), z.any()) },
     run: async (a) => ok(await runCommand(pid(a), cmd("updateSettings", a))),
   },

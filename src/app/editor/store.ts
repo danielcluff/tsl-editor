@@ -1,6 +1,7 @@
 import { createContext, createMemo, createSignal, flush, reconcile, snapshot, createStore } from "solid-js";
 import { compileProject, type CompileResult } from "../../core/codegen";
 import { executeCommand, type Command } from "../../core/commands";
+import { chainToMultiOp, detectConvertibleChain, multiOpToChain } from "../../core/multiop";
 import {
   addNode as coreAddNode,
   checkConnection,
@@ -10,7 +11,15 @@ import {
   graphOf,
   inferTypes,
   makeNode,
+  createLoop as coreCreateLoop,
+  setLoopMode as coreSetLoopMode,
+  normalizeDoc,
+  uniformAcrossSurface,
+  animatedNodes,
+  type LoopMode,
+  nodePreviewOn,
   removeNodes as coreRemoveNodes,
+  setNodePreviewDefault,
   resolvePorts,
   uid,
 } from "../../core/graph";
@@ -23,10 +32,12 @@ import type {
   GraphKind,
   GraphNode,
   GraphRef,
+  MultiOpOperation,
   ProjectDoc,
   SubgraphDef,
   XY,
 } from "../../core/types";
+import { ui } from "./ui-state";
 import { api } from "../lib/api";
 
 export type Mode = "pan" | "select";
@@ -69,21 +80,18 @@ export interface SubgraphSession {
 }
 
 const MAX_HISTORY = 150;
-const BINARY_OPS: Record<string, "add" | "sub" | "mul" | "div" | "mod" | "pow" | "min" | "max"> = {
-  "math/add": "add",
-  "math/sub": "sub",
-  "math/mul": "mul",
-  "math/div": "div",
-  "math/mod": "mod",
-  "math/pow": "pow",
-  "math/min": "min",
-  "math/max": "max",
-};
+
+function sameRecord(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) if (a[k] !== b[k]) return false;
+  return true;
+}
 
 export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; persist?: boolean } = {}) {
   const persist = opts.persist ?? true;
   const [state, setState] = createStore({
-    doc: initial,
+    doc: normalizeDoc(initial),
     graph: "material" as GraphRef,
     selection: { nodes: [] as string[], edges: [] as string[] },
     viewports: {} as Record<string, Viewport>,
@@ -107,10 +115,28 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
   // ---- derived -------------------------------------------------------------
   const graph = createMemo(() => graphOf(state.doc, state.graph));
   const nodesById = createMemo(() => new Map(graph().nodes.map((n) => [n.id, n])));
+  // Recomputed on every change, but shares structure with the previous result: an unchanged
+  // node keeps its entry object and an unchanged graph keeps the whole map, so moving a node
+  // (or any edit that doesn't affect types) doesn't re-render every port, edge and preview.
+  let lastTypes: ReturnType<typeof inferTypes> | undefined;
   const types = createMemo(() => {
     version();
-    return inferTypes(state.doc, graph());
+    const next = inferTypes(state.doc, graph());
+    const prev = lastTypes;
+    let same = !!prev && prev.size === next.size;
+    if (prev)
+      for (const [id, entry] of next) {
+        const old = prev.get(id);
+        if (old && sameRecord(old.in, entry.in) && sameRecord(old.out, entry.out)) next.set(id, old);
+        else same = false;
+      }
+    lastTypes = same ? prev : next;
+    return lastTypes!;
   });
+  /** Per node: output can't vary across the surface (see graph.uniformAcrossSurface). */
+  const surfaceUniform = createMemo(() => uniformAcrossSurface(state.doc, graph()));
+  /** Nodes whose value can change every frame (see graph.animatedNodes). */
+  const animated = createMemo(() => animatedNodes(state.doc, graph()));
   const viewport = createMemo<Viewport>(() => state.viewports[state.graph] ?? { x: 120, y: 80, zoom: 1 });
   const diagnostics = createMemo<Diagnostic[]>(() => compiled()?.diagnostics ?? []);
   const topGraph = (): GraphKind => (state.graph === "post" ? "post" : "material");
@@ -262,6 +288,7 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
   /** Replace the whole document (load from JSON / external reload). */
   function replaceDoc(doc: ProjectDoc, o: { history?: boolean } = {}) {
     if (o.history) pushHistory();
+    normalizeDoc(doc);
     setState((s) => {
       s.doc = doc;
       s.graph = "material";
@@ -446,6 +473,16 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     }, o);
   }
 
+  /** Flip one node's preview (stored as an override of the project default). */
+  function toggleNodePreview(nodeId: string) {
+    updateData(nodeId, (n) => (n.data.debug = !nodePreviewOn(state.doc, n)), { recompile: false });
+  }
+
+  /** Show/hide previews on every node: sets the default and clears per-node overrides. */
+  function setNodePreviews(on: boolean) {
+    mutate((doc) => setNodePreviewDefault(doc, on), { recompile: false });
+  }
+
   function autoLayout() {
     const sizes = new Map(graph().nodes.map((n) => [n.id, nodeSize(n)]));
     mutate((doc) => coreAutoLayout(graphOf(doc, state.graph), sizes));
@@ -552,9 +589,10 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     if (!ids.length) return;
     const b = selectionBounds(ids);
     const gid = mutate((doc) => {
-      const group = makeNode("utils/group", { x: b.minX - 30, y: b.minY - 50 });
-      group.width = b.maxX - b.minX + 60;
-      group.height = b.maxY - b.minY + 80;
+      // even padding: the name sits above the box, and 32px clears the 16px drag frame
+      const group = makeNode("utils/group", { x: b.minX - 32, y: b.minY - 32 });
+      group.width = b.maxX - b.minX + 64;
+      group.height = b.maxY - b.minY + 64;
       const g = graphOf(doc, state.graph);
       g.nodes.unshift(group);
       for (const n of g.nodes) if (ids.includes(n.id)) n.parentId = group.id;
@@ -582,104 +620,56 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     const c = at ?? viewCenter();
     const x = c.x - 280;
     const y = c.y - 160;
-    const id = mutate((doc) => {
-      const g = state.graph;
-      const loop = coreAddNode(doc, g, "loop", { x, y });
-      loop.width = 560;
-      loop.height = 320;
-      const part = (type: string, px: number, py: number) => {
-        const n = coreAddNode(doc, g, type, { x: x + px, y: y + py });
-        n.parentId = loop.id;
-        return n;
-      };
-      part("loop/count", 30, 50);
-      part("loop/index", 30, 150);
-      const acc = part("loop/accumulator", 30, 220);
-      const out = part("loop/output", 380, 200);
-      coreConnect(doc, g, { source: acc.id, sourceHandle: "acc", target: out.id, targetHandle: "next" });
-      return loop.id;
-    });
+    const id = mutate((doc) => coreCreateLoop(doc, state.graph, { x, y }).loop.id);
     select([id]);
   }
 
+  /** Switch a loop's mode (Count, Range, ...), swapping its parts to match. */
+  function setLoopMode(loopId: string, mode: LoopMode) {
+    mutate((doc) => void coreSetLoopMode(doc, state.graph, loopId, mode));
+  }
+
   // ---- multi-op ---------------------------------------------------------------
+  /** The selection as a convertible chain (the original's rule), or why it isn't one. */
+  const selectionChain = createMemo(() => detectConvertibleChain(state.selection.nodes, graph()));
+
   function convertToMultiOp() {
-    const sel = state.selection.nodes.map((id) => nodesById().get(id)!).filter((n) => n && BINARY_OPS[n.type]);
-    if (!sel.length) return;
-    const g = graph();
-    const selIds = new Set(sel.map((n) => n.id));
-    // root = selected binary node whose output does not feed another selected binary node's "a"
-    const feedsA = (n: GraphNode) =>
-      g.edges.some((e) => e.source === n.id && selIds.has(e.target) && e.targetHandle === "a");
-    const root = sel.find((n) => !feedsA(n));
-    if (!root) return;
-    // walk down the "a" chain
-    const chain: GraphNode[] = [root];
-    for (;;) {
-      const head = chain[chain.length - 1];
-      const e = g.edges.find((x) => x.target === head.id && x.targetHandle === "a" && selIds.has(x.source));
-      if (!e) break;
-      const next = nodesById().get(e.source)!;
-      const usedElsewhere = g.edges.some((x) => x.source === next.id && x.target !== head.id);
-      if (usedElsewhere) break;
-      chain.push(next);
+    const chain = selectionChain();
+    if (!chain.valid) {
+      if (state.selection.nodes.length > 1) ui.toast(chain.reason, "error");
+      return;
     }
-    chain.reverse(); // innermost first
-    const first = chain[0];
-    const ops = chain.map((n) => ({ op: BINARY_OPS[n.type] }));
-    const inputs: ({ edge?: GraphEdge; value?: unknown })[] = [];
-    const inEdge = (n: GraphNode, h: string) => g.edges.find((e) => e.target === n.id && e.targetHandle === h);
-    inputs.push({ edge: inEdge(first, "a"), value: first.data.values.a ?? 0 });
-    for (const n of chain) inputs.push({ edge: inEdge(n, "b"), value: n.data.values.b ?? 0 });
-    const outEdges = g.edges.filter((e) => e.source === root.id);
-    const pos = { ...first.position };
-    const newId = mutate((doc) => {
-      const gr = graphOf(doc, state.graph);
-      const mo = coreAddNode(doc, state.graph, "math/multiOp", pos);
-      mo.data.ops = ops;
-      mo.data.values = {};
-      inputs.forEach((inp, i) => {
-        mo.data.values[`in${i}`] = typeof inp.value === "object" ? 0 : inp.value;
-      });
-      const ids = chain.map((n) => n.id);
-      coreRemoveNodes(doc, state.graph, ids);
-      inputs.forEach((inp, i) => {
-        if (inp.edge) gr.edges.push({ ...inp.edge, id: uid("e"), target: mo.id, targetHandle: `in${i}` });
-      });
-      for (const e of outEdges) gr.edges.push({ ...e, id: uid("e"), source: mo.id, sourceHandle: "out" });
-      return mo.id;
+    const first = nodesById().get(chain.ordered[0])!;
+    const id = mutate((doc) => {
+      const node = makeNode("math/multiOp", first.position);
+      node.parentId = first.parentId;
+      chainToMultiOp(graphOf(doc, state.graph), chain.ordered, node);
+      return node.id;
     });
-    select([newId]);
+    select([id]);
   }
 
   function expandMultiOp() {
     const node = selectedNode();
     if (!node || node.type !== "math/multiOp") return;
-    const g = graph();
-    const ops = node.data.ops ?? [];
-    const inEdge = (h: string) => g.edges.find((e) => e.target === node.id && e.targetHandle === h);
-    const outEdges = g.edges.filter((e) => e.source === node.id);
-    const typeFor = Object.fromEntries(Object.entries(BINARY_OPS).map(([t, o]) => [o, t]));
+    const ids = mutate((doc) => {
+      const g = graphOf(doc, state.graph);
+      return multiOpToChain(g, g.nodes.find((n) => n.id === node.id)!, (type, pos) => makeNode(type, pos));
+    });
+    select(ids);
+  }
+
+  /** Edit a multi-op's operation list: add, remove or change an operation. */
+  function editMultiOp(nodeId: string, fn: (operations: MultiOpOperation[]) => void) {
     mutate((doc) => {
-      const gr = graphOf(doc, state.graph);
-      let prev: GraphNode | null = null;
-      ops.forEach((step, i) => {
-        const n = coreAddNode(doc, state.graph, typeFor[step.op], { x: node.position.x + i * 200, y: node.position.y });
-        if (i === 0) {
-          const ea = inEdge("in0");
-          if (ea) gr.edges.push({ ...ea, id: uid("e"), target: n.id, targetHandle: "a" });
-          else n.data.values.a = node.data.values.in0 ?? 0;
-        } else if (prev) {
-          gr.edges.push({ id: uid("e"), source: prev.id, sourceHandle: "out", target: n.id, targetHandle: "a" });
-        }
-        const eb = inEdge(`in${i + 1}`);
-        if (eb) gr.edges.push({ ...eb, id: uid("e"), target: n.id, targetHandle: "b" });
-        else n.data.values.b = node.data.values[`in${i + 1}`] ?? 0;
-        prev = n;
-      });
-      const last = prev as GraphNode | null;
-      coreRemoveNodes(doc, state.graph, [node.id]);
-      if (last) for (const e of outEdges) gr.edges.push({ ...e, id: uid("e"), source: last.id });
+      const g = graphOf(doc, state.graph);
+      const n = g.nodes.find((x) => x.id === nodeId);
+      if (!n) return;
+      fn((n.data.operations ??= []));
+      // drop wires and values for ports that no longer exist (e.g. after changing an op)
+      const keys = new Set(resolvePorts(doc, n).inputs.map((p) => p.key));
+      g.edges = g.edges.filter((e) => e.target !== n.id || keys.has(e.targetHandle));
+      for (const k of Object.keys(n.data.values)) if (k.startsWith("op_") && !keys.has(k)) delete n.data.values[k];
     });
   }
 
@@ -986,6 +976,8 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     viewCenter,
     fitView,
     focusNode,
+    surfaceUniform,
+    animated,
     nodeSize,
     setGraph,
     // actions
@@ -996,6 +988,9 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     finishDrag,
     setValue,
     updateData,
+    toggleNodePreview,
+    setNodePreviews,
+    setLoopMode,
     autoLayout,
     copySelection,
     paste,
@@ -1006,6 +1001,8 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     createLoop,
     convertToMultiOp,
     expandMultiOp,
+    editMultiOp,
+    selectionChain,
     edgeToPortal,
     createSubgraph,
     setSubgraphDraft,

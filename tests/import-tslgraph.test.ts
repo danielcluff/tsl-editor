@@ -20,7 +20,8 @@ const fixture = {
     node("time", "geo/time", { x: 0, y: 400 }),
     node("mul", "math/mul", { x: 300, y: 400 }, { a: 1, b: 2 }),
     node("mystery", "fancy/newNode", { x: 500, y: 400 }, { strength: 3 }),
-    { ...node("mo", "math/multiOp", { x: 500, y: 600 }), data: { type: "math/multiOp", values: { op_x_b: 5 }, operations: [{ id: "x", op: "sin" }], connected: {} } },
+    { ...node("mo", "math/multiOp", { x: 500, y: 600 }), data: { type: "math/multiOp", values: { op_y_b: 5, localName: "wave" }, operations: [{ id: "x", op: "sin" }, { id: "y", op: "mul" }], connected: {} } },
+    { ...node("mo2", "math/multiOp", { x: 500, y: 700 }), data: { type: "math/multiOp", values: {}, operations: [{ id: "z", op: "frobnicate" }], connected: {} } },
     node("sgi", "custom/subgraph-1", { x: 300, y: 800 }),
     node("code", "code/round-1", { x: 500, y: 800 }),
   ],
@@ -96,10 +97,21 @@ describe("tsl-graph.xyz import", () => {
     expect(ph.data.placeholder).toMatchObject({ originalType: "fancy/newNode", inputs: ["input"], outputs: ["result"] });
     expect(ph.data.placeholder!.meta).toContain('"strength": 3');
     expect(m.edges.some((e) => e.target === "mystery") && m.edges.some((e) => e.source === "mystery")).toBe(true);
-    const mo = byId("mo");
-    expect(mo.type).toBe("import/placeholder");
-    expect(mo.data.placeholder!.meta).toContain('"op": "sin"');
+    // a multi-op with an operation we don't have stays a placeholder
+    const mo2 = byId("mo2");
+    expect(mo2.type).toBe("import/placeholder");
+    expect(mo2.data.placeholder!.reason).toContain("frobnicate");
     expect(report.placeholders.map((p) => p.type).sort()).toEqual(["fancy/newNode", "math/multiOp"]);
+  });
+
+  it("imports multi-ops with their operations, values and wires", () => {
+    const mo = byId("mo");
+    expect(mo.type).toBe("math/multiOp");
+    expect(mo.data.operations).toEqual([{ id: "x", op: "sin" }, { id: "y", op: "mul" }]);
+    expect(mo.data.values).toEqual({ op_y_b: 5 });
+    expect(mo.data.localName).toBe("wave");
+    expect(m.edges.find((e) => e.id === "e5")?.targetHandle).toBe("op_x_x");
+    expect(compileProject(doc).code).toMatch(/const wave = sin\(\w+\)\.mul\(float\(5\)\);/);
   });
 
   it("drops only edges whose ports don't exist", () => {
@@ -135,5 +147,45 @@ describe("tsl-graph.xyz import", () => {
     expect(() => executeCommand(doc, { op: "updateNode", nodeId: "mystery", position: { x: 0, y: 0 } })).not.toThrow();
     expect(() => executeCommand(doc, { op: "connect", source: "time", target: "mystery", targetHandle: "input" })).toThrow(/can't be connected/);
     expect(() => executeCommand(doc, { op: "deleteNodes", nodeIds: ["mystery"] })).not.toThrow();
+  });
+});
+
+describe("imported loops", () => {
+  // shape copied from the original editor's state for a Range loop
+  const L = "loop-1";
+  const part = (id: string, type: string, pos: { x: number; y: number }, values: Record<string, unknown> = {}) =>
+    node(`${L}::${id}`, type, pos, values, { parentId: L });
+  const src = {
+    version: 2,
+    nodes: [
+      node("mat", "material/standard", { x: 900, y: 0 }),
+      { ...node(L, "group", { x: 212, y: 224 }), data: { type: "loop", values: { label: "Loop", loopMode: "range", loopType: "int", loopCompare: "<" }, connected: {} }, style: { width: 600, height: 500 } },
+      part("acc", "loop/accumulator", { x: 20, y: 290 }, { seed: 0 }),
+      part("output", "loop/output", { x: 530, y: 20 }),
+      part("start", "loop/start", { x: 20, y: 20 }, { start: 0 }),
+      part("end", "loop/end", { x: 20, y: 110 }, { end: 4 }),
+      part("index", "loop/index", { x: 20, y: 200 }),
+      { ...node("add", "math/add", { x: 300, y: 200 }), parentId: L },
+    ],
+    edges: [
+      { id: "a", source: `${L}::acc`, sourceHandle: "acc", target: "add", targetHandle: "a" },
+      { id: "b", source: `${L}::index`, sourceHandle: "index", target: "add", targetHandle: "b" },
+      { id: "c", source: "add", sourceHandle: "out", target: `${L}::output`, targetHandle: "next" },
+      { id: "d", source: `${L}::output`, sourceHandle: "out", target: "mat", targetHandle: "colorNode" },
+    ],
+  };
+
+  it("keeps the loop, its mode and its parts", () => {
+    const { doc } = importTslGraph(src, "loops");
+    const loop = doc.graphs.material.nodes.find((n) => n.id === L)!;
+    expect(loop.type).toBe("loop");
+    expect(loop.data.values).toMatchObject({ loopMode: "range", loopType: "int", loopCompare: "<" });
+    expect(loop.data.label).toBe("Loop");
+    expect(doc.graphs.material.nodes.filter((n) => n.parentId === L).map((n) => n.type).sort()).toEqual(
+      ["loop/accumulator", "loop/end", "loop/index", "loop/output", "loop/start", "math/add"],
+    );
+    const r = compileProject(doc);
+    expect(r.diagnostics.filter((d) => d.level === "error")).toEqual([]);
+    expect(r.code).toMatch(/Loop\(\{ start: 0, end: 4, type: 'int', condition: '<', name: 'i' \}/);
   });
 });

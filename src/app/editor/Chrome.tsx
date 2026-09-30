@@ -29,6 +29,10 @@ import {
   Undo2,
   Waypoints,
   X,
+  Bug,
+  BugOff,
+  Combine,
+  Split,
 } from "lucide-static";
 import { getNodeDef } from "../../core/registry";
 import { A } from "../lib/router";
@@ -117,6 +121,17 @@ export function TopBar(props: { embed?: boolean; onSaveJson: () => void; onLoadJ
       </Show>
       <div class="flex-1" />
       <SaveBadge />
+      <Tooltip content={ed.state.doc.settings.nodePreviews !== false ? "Hide all node previews" : "Show all node previews"} side="bottom">
+        <button
+          type="button"
+          aria-label="Toggle node previews"
+          aria-pressed={ed.state.doc.settings.nodePreviews !== false ? "true" : "false"}
+          class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+          onClick={() => ed.setNodePreviews(ed.state.doc.settings.nodePreviews === false)}
+        >
+          <Icon svg={ed.state.doc.settings.nodePreviews !== false ? Bug : BugOff} class="size-3.5" />
+        </button>
+      </Tooltip>
       <Show when={!props.embed}>
         <Tooltip content="Share Project" side="bottom">
           <button
@@ -195,6 +210,22 @@ function SaveBadge() {
 // bottom toolbar
 // ---------------------------------------------------------------------------
 
+/** Like the original: shown only while a convertible chain / a single multi-op is selected. */
+function MultiOpButtons() {
+  const ed = useContext(EditorContext);
+  const k = (id: keyof typeof SHORTCUTS) => SHORTCUTS[id].display;
+  return (
+    <>
+      <Show when={ed.selectionChain().valid}>
+        <ToolButton icon={Combine} label={`Convert to Multi-op (${k("multiOp")})`} onClick={() => ed.convertToMultiOp()} />
+      </Show>
+      <Show when={ed.selectedNode()?.type === "math/multiOp"}>
+        <ToolButton icon={Split} label={`Expand Multi-op (${k("expandMultiOp")})`} onClick={() => ed.expandMultiOp()} />
+      </Show>
+    </>
+  );
+}
+
 function ToolButton(props: { icon: string; label: string; active?: boolean; disabled?: boolean; onClick: () => void }) {
   return (
     <Tooltip content={props.label} side="top">
@@ -239,6 +270,7 @@ export function Toolbar() {
       <ToolButton icon={FileCode2} label={`Create Code Node (${k("codeNode")})`} onClick={() => ed.addNodeAt("code/tsl")} />
       <ToolButton icon={Repeat} label={`Create Loop (${k("loop")})`} onClick={() => ed.createLoop()} />
       <ToolButton icon={Group} label={`Group Nodes (${k("group")})`} disabled={!ed.state.selection.nodes.length} onClick={() => ed.groupSelection()} />
+      <MultiOpButtons />
       <div class="mx-1 h-4 w-px bg-border" />
       <ToolButton icon={Undo2} label={`Undo (${k("undo")})`} disabled={!ed.state.canUndo} onClick={() => ed.undo()} />
       <ToolButton icon={Redo2} label={`Redo (${k("redo")})`} disabled={!ed.state.canRedo} onClick={() => ed.redo()} />
@@ -284,6 +316,7 @@ function SubgraphBar() {
       <ToolButton icon={FileCode2} label={`Create Code Node (${k("codeNode")})`} onClick={() => ed.addNodeAt("code/tsl")} />
       <ToolButton icon={Repeat} label={`Create Loop (${k("loop")})`} onClick={() => ed.createLoop()} />
       <ToolButton icon={Group} label={`Group Nodes (${k("group")})`} disabled={!ed.state.selection.nodes.length} onClick={() => ed.groupSelection()} />
+      <MultiOpButtons />
       <div class="mx-1 h-4 w-px bg-border" />
       <ToolButton icon={Undo2} label={`Undo (${k("undo")})`} disabled={!ed.state.canUndo} onClick={() => ed.undo()} />
       <ToolButton icon={Redo2} label={`Redo (${k("redo")})`} disabled={!ed.state.canRedo} onClick={() => ed.redo()} />
@@ -368,7 +401,7 @@ export function ContextMenu() {
               Copy
             </MenuItem>
             <MenuItem onSelect={run(() => ed.duplicateSelection())}>Duplicate</MenuItem>
-            <MenuItem onSelect={run(() => ed.updateData(n().id, (x) => (x.data.debug = x.data.debug === false), { recompile: false }))}>
+            <MenuItem onSelect={run(() => ed.toggleNodePreview(n().id))}>
               Toggle Preview
             </MenuItem>
             <MenuSeparator />
@@ -385,7 +418,7 @@ export function ContextMenu() {
                 Create Subgraph
               </MenuItem>
             </Show>
-            <Show when={["math/add", "math/sub", "math/mul", "math/div", "math/mod", "math/pow", "math/min", "math/max"].includes(n().type)}>
+            <Show when={ed.selectionChain().valid}>
               <MenuItem shortcut={SHORTCUTS.multiOp.display} onSelect={run(() => ed.convertToMultiOp())}>
                 Convert to Multi-op
               </MenuItem>

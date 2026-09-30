@@ -7,8 +7,12 @@ import {
   addNode,
   checkConnection,
   connect,
+  createLoop,
   disconnect,
   findGlobal,
+  LOOP_MODES,
+  setLoopMode,
+  type LoopMode,
   graphOf,
   inferTypes,
   nodeTitle,
@@ -17,8 +21,9 @@ import {
   uid,
 } from "./graph";
 import { autoLayout } from "./layout";
+import { MULTI_OP_ORDER, multiOpInfo, newMultiOpId } from "./multiop";
 import { allNodeDefs, getNodeDef } from "./registry";
-import type { CodeNodeData, GlobalDef, GraphKind, GraphRef, PreviewSettings, ProjectDoc, XY } from "./types";
+import type { CodeNodeData, GlobalDef, GraphKind, GraphNode, GraphRef, PreviewSettings, ProjectDoc, XY } from "./types";
 
 export type Command =
   | { op: "getGraph"; graph?: GraphRef }
@@ -39,6 +44,8 @@ export type Command =
       text?: string;
       width?: number;
       height?: number;
+      /** math/multiOp: its operations (ids are generated when missing). */
+      operations?: { id?: string; op: string }[];
       /** Name other operations in the same batch can reference as `$name`. */
       ref?: string;
     }
@@ -58,6 +65,7 @@ export type Command =
       parentId?: string | null;
       width?: number;
       height?: number;
+      operations?: { id?: string; op: string }[];
     }
   | { op: "deleteNodes"; graph?: GraphRef; nodeIds: string[] }
   | { op: "autoLayout"; graph?: GraphRef }
@@ -130,6 +138,24 @@ export function executeCommand(doc: ProjectDoc, cmd: Command, refs: Refs = new M
         throw new CommandError("Placeholder nodes only come from imports and can't be added");
       if (def.graphs && !graph.startsWith("sg:") && !def.graphs.includes(graph as GraphKind))
         throw new CommandError(`"${cmd.type}" can only be used in the ${def.graphs.join("/")} graph`);
+      if (def.kind === "loop") {
+        // a loop comes with the parts for its mode
+        const mode = String(cmd.values?.loopMode ?? "count") as LoopMode;
+        if (!LOOP_MODES.some((m) => m.value === mode)) throw new CommandError(`Unknown loop mode "${mode}"`);
+        const { loop, parts } = createLoop(doc, graph, cmd.position ?? nextPosition(doc, graph), mode);
+        for (const k of ["loopType", "loopCompare"]) if (cmd.values?.[k] !== undefined) loop.data.values[k] = cmd.values[k];
+        if (cmd.label) loop.data.label = cmd.label;
+        if (cmd.width) loop.width = cmd.width;
+        if (cmd.height) loop.height = cmd.height;
+        if (cmd.ref) refs.set(cmd.ref, loop.id);
+        return { nodeId: loop.id, ...(cmd.ref ? { ref: cmd.ref } : {}), parts };
+      }
+      if (def.kind === "loopPart" && cmd.parentId) {
+        const parentId = resolveRef(refs, cmd.parentId);
+        const existing = graphOf(doc, graph).nodes.find((n) => n.parentId === parentId && n.type === cmd.type);
+        if (existing)
+          throw new CommandError(`That loop already has a ${cmd.type} part ("${existing.id}"); loops create their own parts, so use that one`);
+      }
       const node = addNode(doc, graph, cmd.type, cmd.position ?? nextPosition(doc, graph), {
         ...(cmd.values ? { values: cmd.values } : {}),
         ...(cmd.label ? { label: cmd.label } : {}),
@@ -141,6 +167,10 @@ export function executeCommand(doc: ProjectDoc, cmd: Command, refs: Refs = new M
         ...(cmd.text !== undefined ? { text: cmd.text } : {}),
       });
       if (cmd.activeInputs) node.data.activeInputs = [...cmd.activeInputs];
+      if (cmd.operations) {
+        if (def.kind !== "multiOp") throw new CommandError("operations only apply to math/multiOp");
+        setMultiOpOperations(doc, graph, node, cmd.operations, cmd.values);
+      }
       if (cmd.parentId) node.parentId = resolveRef(refs, cmd.parentId);
       if (cmd.width) node.width = cmd.width;
       if (cmd.height) node.height = cmd.height;
@@ -184,8 +214,19 @@ export function executeCommand(doc: ProjectDoc, cmd: Command, refs: Refs = new M
         const onlyMoves = Object.keys(cmd).every((k) => ["op", "graph", "nodeId", "position"].includes(k));
         if (!onlyMoves) throw new CommandError("Unsupported imported nodes are read-only; delete them or replace them");
       }
-      if (cmd.values) for (const [k, v] of Object.entries(cmd.values)) node.data.values[k] = v;
+      if (cmd.values) for (const [k, v] of Object.entries(cmd.values)) if (k !== "loopMode") node.data.values[k] = v;
+      let loopParts: Record<string, string> | undefined;
+      if (cmd.values?.loopMode !== undefined) {
+        if (getNodeDef(node.type)?.kind !== "loop") throw new CommandError("loopMode only applies to loop nodes");
+        const mode = String(cmd.values.loopMode) as LoopMode;
+        if (!LOOP_MODES.some((m) => m.value === mode)) throw new CommandError(`Unknown loop mode "${mode}"`);
+        loopParts = setLoopMode(doc, graph, node.id, mode);
+      }
       if (cmd.activeInputs) node.data.activeInputs = [...cmd.activeInputs];
+      if (cmd.operations) {
+        if (getNodeDef(node.type)?.kind !== "multiOp") throw new CommandError("operations only apply to math/multiOp");
+        setMultiOpOperations(doc, graph, node, cmd.operations, cmd.values);
+      }
       if (cmd.label !== undefined) node.data.label = cmd.label || undefined;
       if (cmd.localName !== undefined) node.data.localName = cmd.localName || undefined;
       if (cmd.text !== undefined) node.data.text = cmd.text;
@@ -204,7 +245,7 @@ export function executeCommand(doc: ProjectDoc, cmd: Command, refs: Refs = new M
       if (cmd.parentId !== undefined) node.parentId = cmd.parentId ? resolveRef(refs, cmd.parentId) : undefined;
       if (cmd.width) node.width = cmd.width;
       if (cmd.height) node.height = cmd.height;
-      return { nodeId: node.id };
+      return { nodeId: node.id, ...(loopParts ? { parts: loopParts } : {}) };
     }
 
     case "deleteNodes": {
@@ -368,6 +409,25 @@ export function describeGraph(doc: ProjectDoc, graph: GraphRef) {
   };
 }
 
+/** Replace a multi-op's operations, dropping wires and values for ports that no longer exist. */
+function setMultiOpOperations(
+  doc: ProjectDoc,
+  graph: GraphRef,
+  node: GraphNode,
+  operations: { id?: string; op: string }[],
+  values?: Record<string, unknown>,
+) {
+  const unknown = operations.filter((o) => !multiOpInfo(o.op)).map((o) => o.op);
+  if (unknown.length) throw new CommandError(`Unknown operation(s): ${unknown.join(", ")}. Available: ${MULTI_OP_ORDER.join(", ")}`);
+  node.data.operations = operations.map((o, i) => ({ id: o.id ?? newMultiOpId(i), op: o.op }));
+  const keys = new Set(resolvePorts(doc, node).inputs.map((p) => p.key));
+  const g = graphOf(doc, graph);
+  g.edges = g.edges.filter((e) => e.target !== node.id || keys.has(e.targetHandle));
+  for (const k of Object.keys(node.data.values)) if (!keys.has(k)) delete node.data.values[k];
+  // values given alongside may target the new ports
+  if (values) for (const [k, v] of Object.entries(values)) if (keys.has(k)) node.data.values[k] = v;
+}
+
 export function describeNodeType(type: string) {
   const def = getNodeDef(type);
   if (!def) throw new CommandError(`Unknown node type "${type}"`);
@@ -404,7 +464,11 @@ const NODE_NOTES: Record<string, string> = {
   localGet: "Set localSourceId to the id of a Set Local node.",
   globalRef: "Set globalId to a project global (see addGlobal).",
   loop:
-    "Loop container. Create parts (loop/count or loop/start+loop/end, loop/index, loop/accumulator, loop/output) with parentId set to the loop node id. Inside, accumulator.acc feeds your math and loop/output.next receives the next accumulator value; loop/output.out outside the loop is the final value.",
+    "Loop container. Adding it creates its parts (returned as `parts`, by type) for values.loopMode: count (loop/count, loop/index), range (loop/start, loop/end, loop/index), reverse (loop/start, loop/index; counts down from start-1 to 0), nested (loop/count, loop/count2, loop/index, loop/index2) or condition (loop/condition: a while loop). Every mode also has loop/accumulator and loop/output. Range/reverse take values.loopType (int|float) and values.loopCompare (<, <=, >, >=). Change the mode later with update_node values.loopMode, which swaps the parts. Put your math nodes inside with parentId = the loop id: accumulator.acc is the running value, wire the next value into loop/output.next, and loop/output.out outside the loop is the result.",
+  multiOp:
+    "A chain of math operations in one node (like sin(x).mul(2).add(0.5)). Set `operations: [{ op }]` on add_node/update_node, using TSL names: " +
+    MULTI_OP_ORDER.join(", ") +
+    ". The previous result feeds each operation's first/chain input automatically; the other inputs become ports named op_<operationId>_<key> (see the returned ports) and take inline values under the same keys. Output is `out`.",
   gradient: "values.stops: [{ pos: 0..1, color: '#rrggbb' }]; values.mode: 0 linear, 1 step.",
   textureSample: "values.url: image URL or data URL.",
   comment: "Markdown text in `text`; width/height set the box size.",

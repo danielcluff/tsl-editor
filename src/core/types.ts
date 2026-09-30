@@ -139,8 +139,8 @@ export interface NodeData {
   /** Local get: id of the Set Local node. */
   localSourceId?: string;
   /** Multi-op expression tree. */
-  ops?: MultiOpStep[];
-  /** Node shows its debug preview thumbnail. */
+  operations?: MultiOpOperation[];
+  /** Per-node preview override; unset follows `settings.nodePreviews`. */
   debug?: boolean;
   collapsed?: boolean;
   /** Portal pair id. */
@@ -169,8 +169,10 @@ export interface GradientStop {
   color: string;
 }
 
-export interface MultiOpStep {
-  op: "add" | "sub" | "mul" | "div" | "mod" | "pow" | "min" | "max";
+/** One step of a multi-op: `op` is the TSL function name (see core/multiop.ts). */
+export interface MultiOpOperation {
+  id: string;
+  op: string;
 }
 
 export interface CodeNodeData {
@@ -251,6 +253,8 @@ export interface PreviewSettings {
   showLightHelper: boolean;
   /** Hemisphere (ambient) light. */
   ambientIntensity: number;
+  /** Default for node preview thumbnails; a node's own `debug` flag overrides it. */
+  nodePreviews: boolean;
 }
 
 export interface ProjectDoc {

@@ -65,3 +65,29 @@ describe("globals bulk import", () => {
     ]);
   });
 });
+
+describe("loop commands", () => {
+  it("adding a loop creates its parts, updating loopMode swaps them", () => {
+    const doc = createProject("t");
+    const added = executeCommand(doc, { op: "addNode", type: "loop", values: { loopMode: "range", loopCompare: "<=" } }) as {
+      nodeId: string;
+      parts: Record<string, string>;
+    };
+    expect(Object.keys(added.parts).sort()).toEqual(["loop/accumulator", "loop/end", "loop/index", "loop/output", "loop/start"]);
+    const loop = doc.graphs.material.nodes.find((n) => n.id === added.nodeId)!;
+    expect(loop.data.values).toMatchObject({ loopMode: "range", loopCompare: "<=" });
+
+    const updated = executeCommand(doc, { op: "updateNode", nodeId: added.nodeId, values: { loopMode: "nested" } }) as {
+      parts: Record<string, string>;
+    };
+    expect(updated.parts["loop/count2"]).toBeDefined();
+    expect(updated.parts["loop/start"]).toBeUndefined();
+  });
+
+  it("refuses a second copy of a part the loop already has", () => {
+    const doc = createProject("t");
+    const { nodeId, parts } = executeCommand(doc, { op: "addNode", type: "loop" }) as { nodeId: string; parts: Record<string, string> };
+    expect(() => executeCommand(doc, { op: "addNode", type: "loop/count", parentId: nodeId })).toThrow(parts["loop/count"]);
+    expect(() => executeCommand(doc, { op: "addNode", type: "loop", values: { loopMode: "sideways" } })).toThrow(/Unknown loop mode/);
+  });
+});

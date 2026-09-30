@@ -1,11 +1,14 @@
 import { For, Show, createMemo, createSignal, onSettled, useContext } from "solid-js";
-import { canConnectTypes, graphOf, hasPreview } from "../../core/graph";
+import { LOOP_MODES, canConnectTypes, graphOf, hasPreview, loopModeOf, type LoopMode } from "../../core/graph";
 import { getNodeDef, typeColor } from "../../core/registry";
 import type { GraphEdge, GraphNode, XY } from "../../core/types";
 import { EditorContext, type Editor } from "./store";
 import { NodeCard } from "./NodeCard";
 import { renderMarkdown } from "./markdown";
 import { ui } from "./ui-state";
+import { PREVIEW_SIZE } from "../../runtime/preview-size";
+import { Group as GroupIcon, Pencil, Repeat } from "lucide-static";
+import { Icon } from "../ui";
 
 interface PendingConnection {
   from: { nodeId: string; side: "in" | "out"; key: string; type: string };
@@ -508,7 +511,14 @@ function NodeWrapper(props: {
   const ports = createMemo(() => ed.resolvePorts(props.node));
   const t = createMemo(() => ed.types().get(props.node.id));
   // thumbnails are rendered from the compiled material graph only
-  const previewable = () => ed.state.graph === "material" && hasPreview(props.node.type);
+  // nodes inside a loop compile into the loop body, so they have no standalone value to show
+  const inLoop = () => {
+    const parent = props.node.parentId ? ed.graph().nodes.find((n) => n.id === props.node.parentId) : undefined;
+    return !!parent && getNodeDef(parent.type)?.kind === "loop";
+  };
+  const previewable = () => ed.state.graph === "material" && hasPreview(props.node.type) && !inLoop();
+  // math nodes whose output can't vary across the surface show just their value, no picture
+  const surfaceUniform = createMemo(() => getNodeDef(props.node.type)?.category === "Math" && !!ed.surfaceUniform().get(props.node.id));
   const selected = () => ed.state.selection.nodes.includes(props.node.id);
   const onDown = useNodeDrag(ed, () => props.node);
 
@@ -560,7 +570,18 @@ function NodeWrapper(props: {
         targetHandle={props.targetHandle}
         onHandleDown={props.onHandleDown}
         previewable={previewable()}
-        onToggleDebug={() => ed.updateData(props.node.id, (n) => (n.data.debug = n.data.debug === false), { recompile: false })}
+        surfaceUniform={surfaceUniform()}
+        valueStats={ui.debugStats()[props.node.id]}
+        sampleValue={(u, v) => {
+          const px = ui.debugPixels.get(props.node.id);
+          if (!px) return undefined;
+          const x = Math.min(PREVIEW_SIZE - 1, Math.max(0, Math.floor(u * PREVIEW_SIZE)));
+          const y = Math.min(PREVIEW_SIZE - 1, Math.max(0, Math.floor(v * PREVIEW_SIZE)));
+          const i = (y * PREVIEW_SIZE + x) * 4;
+          return [px[i], px[i + 1], px[i + 2], px[i + 3]];
+        }}
+        onToggleDebug={() => ed.toggleNodePreview(props.node.id)}
+        onMultiOp={(fn) => ed.editMultiOp(props.node.id, fn)}
         debugRef={(c) => ui.registerDebugCanvas(props.node.id, c)}
       />
     </div>
@@ -601,22 +622,39 @@ function useResize(ed: Editor, node: () => GraphNode, min = { w: 160, h: 80 }) {
   };
 }
 
+/**
+ * Groups and loops (the original draws both the same way): name above the box,
+ * and a 1rem frame inside the border is the drag handle.
+ */
 function Container(props: { node: GraphNode }) {
   const ed = useContext(EditorContext);
   const isLoop = () => getNodeDef(props.node.type)?.kind === "loop";
+  const kindName = () => (isLoop() ? "Loop" : "Group");
   const selected = () => ed.state.selection.nodes.includes(props.node.id);
   const onDown = useNodeDrag(ed, () => props.node);
   const onResize = useResize(ed, () => props.node, { w: 200, h: 120 });
   const [editing, setEditing] = createSignal(false);
+  // The drag frame is one element clipped to a ring, so the whole ring hovers together and only the
+  // ring takes the pointer (clip-path also clips hit testing). Sizes are inside the 2px border.
+  const ringPath = createMemo(() => {
+    const w = (props.node.width ?? 400) - 4;
+    const h = (props.node.height ?? 240) - 4;
+    const t = 16; // 1rem
+    const r = 12; // outer: the box's inner corner radius (rounded-xl minus the border)
+    const ri = 6; // inner: tighter, so the bar reads as an even thickness around the corners
+    const rr = (x: number, y: number, rw: number, rh: number, rad: number) => {
+      const k = Math.max(0, Math.min(rad, rw / 2, rh / 2));
+      return `M${x + k} ${y}H${x + rw - k}A${k} ${k} 0 0 1 ${x + rw} ${y + k}V${y + rh - k}A${k} ${k} 0 0 1 ${x + rw - k} ${y + rh}H${x + k}A${k} ${k} 0 0 1 ${x} ${y + rh - k}V${y + k}A${k} ${k} 0 0 1 ${x + k} ${y}Z`;
+    };
+    return `path(evenodd, "${rr(0, 0, w, h, r)} ${rr(t, t, w - 2 * t, h - 2 * t, ri)}")`;
+  });
   return (
     <div
       data-node-id={props.node.id}
       class={[
-        "absolute top-0 left-0 rounded-xl border-2",
-        isLoop()
-          ? "border-indigo-500/50 bg-indigo-500/[0.06]"
-          : "border-dashed border-gray-400/40 bg-gray-500/[0.05] dark:border-white/15 dark:bg-white/[0.03]",
-        { "!border-blue-500": selected() },
+        "absolute top-0 left-0 rounded-xl border-2 border-dashed bg-neutral-500/10 transition-colors dark:bg-neutral-400/[0.12]",
+        // selected: the same neutral border, a step more contrast
+        selected() ? "border-neutral-500 dark:border-white/45" : "border-neutral-400/60 dark:border-white/20",
       ]}
       style={{
         transform: `translate(${props.node.position.x}px, ${props.node.position.y}px)`,
@@ -624,45 +662,78 @@ function Container(props: { node: GraphNode }) {
         height: `${props.node.height ?? 240}px`,
       }}
       onPointerDown={(e) => {
-        // only the header bar drags a container, the body is for box-select/pan
-        if (!(e.target as HTMLElement).closest("[data-container-header]")) return;
+        // only the frame and the icon drag it; the inside is for box-select/pan
+        if (!(e.target as HTMLElement).closest("[data-group-grip]")) return;
         onDown(e);
       }}
     >
       <div
-        data-container-header
-        class={[
-          "flex h-8 cursor-grab items-center gap-2 rounded-t-[10px] px-3 text-[10px] font-semibold tracking-widest uppercase",
-          isLoop() ? "bg-indigo-500/15 text-indigo-300" : "text-gray-500 dark:text-white/50",
-        ]}
-        onDblClick={(e) => {
-          e.stopPropagation();
-          setEditing(true);
-        }}
-      >
+        data-group-grip
+        class="absolute inset-0 cursor-grab bg-neutral-500/10 transition-colors hover:bg-neutral-500/20 active:cursor-grabbing dark:bg-white/[0.05] dark:hover:bg-white/[0.09]"
+        style={{ "clip-path": ringPath() }}
+      />
+
+      {/* name, outside the box */}
+      <div class="absolute bottom-full left-0 mb-2 flex max-w-full items-center gap-3">
+        <div
+          data-group-grip
+          title={`Drag to move the ${kindName().toLowerCase()}`}
+          class="flex size-8 shrink-0 cursor-grab items-center justify-center rounded-lg bg-neutral-500/15 text-gray-500 active:cursor-grabbing dark:bg-white/[0.07] dark:text-white/60"
+        >
+          <Icon svg={isLoop() ? Repeat : GroupIcon} class="size-4" />
+        </div>
         <Show
           when={editing()}
-          fallback={<span class="truncate">{props.node.data.label ?? (isLoop() ? "Loop" : "Group")}</span>}
+          fallback={
+            <div
+              data-nodrag
+              class="group/name flex min-w-0 cursor-text items-center gap-2"
+              title={`Rename ${kindName().toLowerCase()}`}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setEditing(true)}
+            >
+              <span class={["truncate text-lg font-medium", props.node.data.label ? "text-gray-700 dark:text-white/80" : "text-gray-400 dark:text-white/35"]}>
+                {props.node.data.label ?? kindName()}
+              </span>
+              <Icon svg={Pencil} class="size-4 shrink-0 text-gray-500 opacity-0 transition-opacity group-hover/name:opacity-100 dark:text-white/60" />
+            </div>
+          }
         >
+          {/* pulled left by its padding + border so the text doesn't move when editing starts */}
           <input
             data-nodrag
-            class="w-full rounded bg-black/30 px-1 py-0.5 text-[10px] tracking-widest text-white uppercase outline-none"
+            class="-ml-[7.5px] w-56 rounded-md border-[1.5px] border-ring/60 bg-background px-1.5 py-0 text-lg font-medium outline-none"
             value={props.node.data.label ?? ""}
-            placeholder="Group name..."
+            placeholder={`${kindName()} name...`}
             ref={(i) => requestAnimationFrame(() => i.select())}
+            onPointerDown={(e) => e.stopPropagation()}
             onBlur={(e) => {
-              const v = e.currentTarget.value;
+              const v = e.currentTarget.value.trim();
               setEditing(false);
-              ed.updateData(props.node.id, (n) => (n.data.label = v || undefined), { recompile: false });
+              if (v !== (props.node.data.label ?? "")) ed.updateData(props.node.id, (n) => (n.data.label = v || undefined), { recompile: false });
             }}
-            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur();
+              e.stopPropagation();
+            }}
           />
         </Show>
         <Show when={isLoop()}>
-          <span class="ml-auto font-mono text-[9px] tracking-normal normal-case opacity-70">for (i) {"{ … }"}</span>
+          {/* loop mode, next to the name like the original */}
+          <select
+            data-nodrag
+            aria-label="Loop mode"
+            class="h-8 shrink-0 cursor-pointer rounded-md border border-input bg-background px-2 text-sm text-gray-700 outline-none dark:text-white/80"
+            value={loopModeOf(props.node, ed.graph().nodes.filter((n) => n.parentId === props.node.id))}
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={(e) => ed.setLoopMode(props.node.id, e.currentTarget.value as LoopMode)}
+          >
+            <For each={LOOP_MODES}>{(m) => <option value={m.value}>{m.label}</option>}</For>
+          </select>
         </Show>
       </div>
-      <div class="absolute right-0 bottom-0 size-4 cursor-se-resize" data-nodrag onPointerDown={onResize}>
+
+      <div class="absolute right-0 bottom-0 z-10 size-4 cursor-se-resize" data-nodrag onPointerDown={onResize}>
         <svg viewBox="0 0 10 10" class="size-full p-1 text-gray-400">
           <path d="M9 1 L1 9 M9 5 L5 9" stroke="currentColor" stroke-width="1" />
         </svg>

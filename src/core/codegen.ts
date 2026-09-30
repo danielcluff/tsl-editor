@@ -1,4 +1,5 @@
-import { findGlobal, findSubgraph, resolvePorts } from "./graph";
+import { LOOP_COMPARES, findGlobal, findSubgraph, loopModeOf, resolvePorts } from "./graph";
+import { multiOpHandleId, multiOpInfo } from "./multiop";
 import { getNodeDef } from "./registry";
 import exportsList from "./tsl-exports.json";
 import { UTIL_SOURCES, utilClosure } from "./tsl-utils";
@@ -599,13 +600,7 @@ function compileNode(scope: Scope, node: GraphNode, def: NodeDef) {
       return;
     }
     case "multiOp": {
-      const ops = node.data.ops ?? [{ op: "add" }];
-      let expr = inputExpr(scope, node, ports.inputs[0]) ?? "0";
-      ops.forEach((step, i) => {
-        const rhs = inputExpr(scope, node, ports.inputs[i + 1]) ?? "0";
-        expr = `${step.op}(${expr}, ${rhs})`;
-      });
-      declare(scope, node, expr, { single: true });
+      declare(scope, node, multiOpExpr(scope, node), { single: true });
       return;
     }
     case "assign": {
@@ -773,6 +768,33 @@ function compileNode(scope: Scope, node: GraphNode, def: NodeDef) {
 // loops
 // ---------------------------------------------------------------------------
 
+/**
+ * `sin(x).mul(b).add(c)`: the first operation gets all its inputs, later ones take the
+ * previous result as their chain input. Like the original this chains methods, but when
+ * the chain input isn't an operation's first argument (step, smoothstep, atan, ...) it
+ * calls the function with the previous result in that slot, so arguments keep their meaning.
+ */
+function multiOpExpr(scope: Scope, node: GraphNode): string {
+  const operations = node.data.operations ?? [];
+  if (!operations.length) return "float(0)";
+  let expr = "";
+  operations.forEach((o, i) => {
+    const info = multiOpInfo(o.op);
+    if (!info) throw new NodeError(`Unknown operation "${o.op}"`);
+    const arg = (p: PortDef) => inputExpr(scope, node, { ...p, key: multiOpHandleId(o.id, p.key) }, { node: true }) ?? "float(0)";
+    if (i === 0) {
+      expr = `${o.op}(${info.inputs.map(arg).join(", ")})`;
+      return;
+    }
+    const rest = info.inputs.filter((p) => p.key !== info.chainKey).map(arg);
+    expr =
+      info.inputs[0]?.key === info.chainKey
+        ? `${expr}.${o.op}(${rest.join(", ")})`
+        : `${o.op}(${info.inputs.map((p) => (p.key === info.chainKey ? expr : arg(p))).join(", ")})`;
+  });
+  return expr;
+}
+
 function compileLoop(scope: Scope, loop: GraphNode) {
   const children = scope.graph.nodes.filter((n) => n.parentId === loop.id);
   const part = (t: string) => children.find((c) => c.type === t);
@@ -784,30 +806,27 @@ function compileLoop(scope: Scope, loop: GraphNode) {
   const out = part("loop/output");
   const cond = part("loop/condition");
 
-  const partValue = (n: GraphNode | undefined, key: string, type: string, fallback: string): string => {
+  // same shapes the original generates for each mode
+  const mode = loopModeOf(loop, children);
+  const type = loop.data.values.loopType === "float" ? "float" : "int";
+  const cmpSetting = String(loop.data.values.loopCompare ?? "");
+  const compare = (LOOP_COMPARES as readonly string[]).includes(cmpSetting) ? cmpSetting : mode === "reverse" ? ">" : "<";
+
+  const partValue = (s: Scope, n: GraphNode | undefined, key: string, t: string, fallback: string): string => {
     if (!n) return fallback;
     const def = getNodeDef(n.type)!;
     const port = def.inputs.find((i) => i.key === key)!;
-    return inputExpr(scope, n, port) ?? literal(n.data.values[key] ?? port.default, type);
+    return inputExpr(s, n, port) ?? literal(n.data.values[key] ?? port.default, t);
   };
 
-  let header: string;
-  let params = "{ i }";
-  if (count && count2) {
-    header = `Loop(${partValue(count, "count", "int", "1")}, ${partValue(count2, "count", "int", "1")}, `;
-    params = "{ i, j }";
-  } else if (count) {
-    header = `Loop(${partValue(count, "count", "int", "1")}, `;
-  } else if (start || end) {
-    const s = partValue(start, "start", "float", "float(0)");
-    const e = partValue(end, "end", "float", "float(1)");
-    header = `Loop({ start: ${s}, end: ${e}, type: 'float', condition: '<' }, `;
-  } else {
-    header = "Loop(1, ";
-  }
+  const loopName = freshName(scope, loop.data.localName ?? `_loop${scope.counter.n}`);
+  const countName = mode === "count" || mode === "nested" ? freshName(scope, `${loopName}_count`) : undefined;
+  const count2Name = mode === "nested" ? freshName(scope, `${loopName}_count2`) : undefined;
+  const asInt = (e: string) => (/^int\(/.test(e) ? e : `int(${e})`);
+  if (countName) emit(scope, `const ${countName} = max(${asInt(partValue(scope, count, "count", "int", "1"))}, 0);`);
+  if (count2Name) emit(scope, `const ${count2Name} = max(${asInt(partValue(scope, count2, "count", "int", "1"))}, 0);`);
 
-  const loopName = freshName(scope, `_loop${scope.counter.n}`);
-  const accName = acc ? freshName(scope, `_acc${scope.counter.n}`) : undefined;
+  const accName = acc ? freshName(scope, `${loopName}_acc`) : undefined;
   emit(scope, `const ${loopName} = Fn(() => {`);
   const inner = newScope(scope.shared, scope.graphKind, scope.graph, scope.globals, scope);
   inner.indent = scope.indent + "  ";
@@ -818,26 +837,48 @@ function compileLoop(scope: Scope, loop: GraphNode) {
     emit(inner, `const ${accName} = ${asNode(seed)}.toVar();`);
     inner.vars.set(acc.id, { name: accName, single: true });
   }
-  emit(inner, `${header}(${params}) => {`);
-  const body = newScope(scope.shared, scope.graphKind, scope.graph, scope.globals, inner);
-  body.indent = inner.indent + "  ";
-  body.lines = inner.lines;
-  for (const idx of children.filter((c) => c.type === "loop/index")) body.vars.set(idx.id, { name: "i", single: true });
-  for (const idx of children.filter((c) => c.type === "loop/index2"))
-    body.vars.set(idx.id, { name: "j", single: true });
-  for (const p of [count, count2, start, end].filter(Boolean) as GraphNode[]) {
-    const def = getNodeDef(p.type)!;
-    body.vars.set(p.id, { name: partValue(p, def.inputs[0].key, String(def.inputs[0].type), "0"), single: true });
-  }
+
   const structural = new Set(["loop/index", "loop/index2", "loop/count", "loop/count2", "loop/start", "loop/end"]);
   const regular = children.filter(
     (c) => !structural.has(c.type) && c.type !== "loop/accumulator" && c.type !== "loop/output" && c.type !== "loop/condition",
   );
-  compileNodes(body, regular, loop.id);
-  if (cond) {
-    const c = inputExpr(body, cond, getNodeDef(cond.type)!.inputs[0]) ?? "bool(true)";
-    emit(body, `If(${c}.not(), () => {\n  Break();\n});`);
+
+  // Condition mode is a while loop: nodes inside the frame that compute the condition are
+  // declared before `Loop(...)` (as node expressions, so they re-evaluate every iteration).
+  const condDeps = new Set<string>();
+  if (mode === "condition" && cond) {
+    const inside = new Set(regular.map((n) => n.id));
+    const visit = (id: string) => {
+      for (const e of scope.graph.edges)
+        if (e.target === id && inside.has(e.source) && !condDeps.has(e.source)) {
+          condDeps.add(e.source);
+          visit(e.source);
+        }
+    };
+    visit(cond.id);
+    compileNodes(inner, regular.filter((n) => condDeps.has(n.id)), loop.id);
   }
+
+  const R = partValue(scope, start, "start", "float", "0");
+  const L = partValue(scope, end, "end", "float", "1");
+  let header: string;
+  if (mode === "nested") header = `Loop(${countName}, ${count2Name}, ({ i, j }) => {`;
+  else if (mode === "range") header = `Loop({ start: ${R}, end: ${L}, type: '${type}', condition: '${compare}', name: 'i' }, ({ i }) => {`;
+  else if (mode === "reverse") header = `Loop({ start: ${R}, type: '${type}', condition: '${compare}', name: 'i' }, ({ i }) => {`;
+  else if (mode === "condition") header = `Loop(${cond ? (inputExpr(inner, cond, getNodeDef(cond.type)!.inputs[0]) ?? "bool(false)") : "bool(false)"}, () => {`;
+  else header = `Loop(${countName}, ({ i }) => {`;
+  emit(inner, header);
+
+  const body = newScope(scope.shared, scope.graphKind, scope.graph, scope.globals, inner);
+  body.indent = inner.indent + "  ";
+  body.lines = inner.lines;
+  if (mode !== "condition") for (const idx of children.filter((c) => c.type === "loop/index")) body.vars.set(idx.id, { name: "i", single: true });
+  if (mode === "nested") for (const idx of children.filter((c) => c.type === "loop/index2")) body.vars.set(idx.id, { name: "j", single: true });
+  if (count && countName) body.vars.set(count.id, { name: countName, single: true });
+  if (count2 && count2Name) body.vars.set(count2.id, { name: count2Name, single: true });
+  if (start) body.vars.set(start.id, { name: R, single: true });
+  if (end) body.vars.set(end.id, { name: L, single: true });
+  compileNodes(body, regular.filter((n) => !condDeps.has(n.id)), loop.id);
   if (out && accName) {
     const next = incomingEdge(scope, out.id, "next");
     if (next) emit(body, `${accName}.assign(${outputRef(body, next.source, next.sourceHandle)});`);
