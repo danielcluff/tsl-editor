@@ -65,6 +65,19 @@ const PARAMS: Record<string, { label: string; fields: ParamField[] }[]> = {
   ],
 };
 
+const FPS_OPTIONS = [30, 60, 90, 120, 144, 240];
+const FPS_KEY = "tsl.previewFps";
+
+function readFpsPreference(): number {
+  try {
+    const v = Number(localStorage.getItem(FPS_KEY));
+    if (FPS_OPTIONS.includes(v)) return v;
+  } catch {
+    // storage unavailable
+  }
+  return 60;
+}
+
 export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) {
   const ed = useContext(EditorContext);
   let host!: HTMLDivElement;
@@ -82,6 +95,7 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
     preview.onDebugStats = (id, stats, pixels) => ui.setDebugStats(id, stats, pixels);
     preview.setDebugLive(untrack(livePreviews));
     preview.setMainAnimated(untrack(mainAnimated));
+    preview.setMaxFps(untrack(maxFps));
     preview.ready
       .then(() => {
         setReady(true);
@@ -154,6 +168,19 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
       preview.applySettings(resolveSettings(JSON.parse(json)));
     },
   );
+
+  // Frame-rate cap for the main view. A per-browser preference (it depends on the display),
+  // not a project setting.
+  const [maxFps, setMaxFpsSignal] = createSignal(readFpsPreference());
+  const setMaxFps = (fps: number) => {
+    setMaxFpsSignal(fps);
+    try {
+      localStorage.setItem(FPS_KEY, String(fps));
+    } catch {
+      // storage unavailable: the choice lasts for this session
+    }
+  };
+  createEffect(maxFps, (fps) => preview?.setMaxFps(fps));
 
   // The main view only redraws every frame when what it shows can change by itself: the
   // material depends on time (or similar), or post-processing runs effects (some, like
@@ -401,8 +428,16 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
                 <NumberField class="h-8" integer min={1} max={100000} value={settings().instanceCount} onChange={(v) => setSetting("instanceCount", v)} />
               </Field>
             </Show>
-            {/* ours: lighting and thumbnail controls (not in the original) */}
+            {/* ours: frame rate, lighting and thumbnail controls (not in the original) */}
             <div class="my-1 h-px bg-border" />
+            <Field label="Frame Rate">
+              <Select
+                class="h-9 px-3"
+                value={maxFps()}
+                options={FPS_OPTIONS.map((f) => ({ value: f, label: `${f} fps` }))}
+                onChange={(v) => setMaxFps(Number(v))}
+              />
+            </Field>
             <LightControls settings={resolveSettings(ed.state.doc.settings)} set={setSetting} />
             <div class="my-1 h-px bg-border" />
             <Field label="Thumbnail">

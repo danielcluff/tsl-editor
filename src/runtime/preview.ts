@@ -4,7 +4,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import type { PreviewSettings } from "../core/types";
-import { PREVIEW_SIZE } from "./preview-size";
+import { PREVIEW_SIZE, paceFrame } from "./preview-size";
 import { evaluateMaterial, evaluatePost, setTextureLoadedHandler, type MaterialResult, type PostResult } from "./scope";
 
 const DREI = "https://raw.githack.com/pmndrs/drei-assets/456060a26bbeb8fdf79326f224b6d99b8bcce736/hdri/";
@@ -111,6 +111,9 @@ export class PreviewRenderer {
    */
   private mainDirty = true;
   private mainAnimated = true;
+  /** Frame-rate cap for the main view (the display's refresh rate is the real ceiling). */
+  private maxFps = 60;
+  private nextMainFrame = 0;
 
   constructor(
     private container: HTMLElement,
@@ -184,8 +187,24 @@ export class PreviewRenderer {
     this.invalidate();
   }
 
+  /** Cap the main view's frame rate (frames per second). */
+  setMaxFps(fps: number) {
+    this.maxFps = Math.max(1, fps);
+    this.nextMainFrame = 0;
+  }
+
   private frame() {
     if (!this.renderer) return;
+    const now = performance.now();
+    // frame cap: skip this display frame if the main view's next slot isn't due yet
+    const pace = paceFrame(now, this.nextMainFrame, 1000 / this.maxFps);
+    this.nextMainFrame = pace.nextSlot;
+    if (pace.render) this.renderMain();
+    this.onFrame?.();
+    this.scheduleDebug(now);
+  }
+
+  private renderMain() {
     // update() reports camera movement, including damping after the pointer is released
     const moved = this.controls.update();
     if (moved || this.mainDirty || this.mainAnimated) {
@@ -197,8 +216,10 @@ export class PreviewRenderer {
         this.onError([`Render: ${err instanceof Error ? err.message : String(err)}`]);
       }
     }
-    this.onFrame?.();
-    const now = performance.now();
+  }
+
+  /** Node previews run on their own clock (PREVIEW_FPS), independent of the main cap. */
+  private scheduleDebug(now: number) {
     if (this.debugTargets.size && !this.debugBusy) {
       if (this.debugLive) {
         // animated previews run at PREVIEW_FPS; static ones only when out of date
