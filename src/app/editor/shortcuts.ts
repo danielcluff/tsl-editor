@@ -29,6 +29,7 @@ export const SHORTCUTS = {
   portal: { code: "KeyP", display: "P" },
   imageExport: { code: "KeyE", display: "Ctrl/Cmd + Shift + E", mod: true, shift: true },
   viewCode: { code: "KeyV", display: "Ctrl/Cmd + Alt + V", mod: true, alt: true },
+  aiChat: { code: "KeyI", display: "Ctrl/Cmd + I", mod: true },
   saveSubgraph: { code: "Enter", display: "Ctrl/Cmd + Enter", mod: true },
   cancelSubgraph: { code: "Escape", display: "Esc" },
 } satisfies Record<string, Shortcut>;
@@ -53,6 +54,7 @@ export const SHORTCUT_LIST: { key: string; label: string }[] = [
   { key: SHORTCUTS.portal.display, label: "Convert Edge to Portal" },
   { key: SHORTCUTS.imageExport.display, label: "Open Image Export" },
   { key: SHORTCUTS.viewCode.display, label: "View Code" },
+  { key: SHORTCUTS.aiChat.display, label: "AI Assistant" },
   { key: SHORTCUTS.saveSubgraph.display, label: "Save & Exit Subgraph" },
   { key: SHORTCUTS.cancelSubgraph.display, label: "Cancel Subgraph Editing" },
   { key: "F", label: "Fit View" },
@@ -70,8 +72,9 @@ function matches(s: Shortcut, e: KeyboardEvent): boolean {
 }
 
 function typing(e: KeyboardEvent): boolean {
-  const t = e.target as HTMLElement | null;
-  if (!t) return false;
+  const t = e.target;
+  // events can target window/document, which have no closest()
+  if (!(t instanceof HTMLElement)) return !!document.querySelector('[role="dialog"][data-state="open"]');
   return (
     t instanceof HTMLInputElement ||
     t instanceof HTMLTextAreaElement ||
@@ -82,7 +85,7 @@ function typing(e: KeyboardEvent): boolean {
   );
 }
 
-export function installShortcuts(ed: Editor): () => void {
+export function installShortcuts(ed: Editor, toggleChat: () => void = () => {}): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (e.defaultPrevented || typing(e)) return;
     const S = SHORTCUTS;
@@ -105,6 +108,7 @@ export function installShortcuts(ed: Editor): () => void {
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.code === "KeyA")
       return act(() => ed.select(ed.graph().nodes.map((n) => n.id)));
     if (matches(S.find, e)) return act(() => ui.setFindOpen(true));
+    if (matches(S.aiChat, e)) return act(toggleChat);
     if (matches(S.imageExport, e)) return act(() => ui.openDialog("export"));
     if (matches(S.ungroup, e)) return act(ed.ungroupSelection);
     if (matches(S.group, e)) return act(ed.groupSelection);

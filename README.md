@@ -28,6 +28,25 @@ pnpm dev          # http://localhost:5173  (editor + API + MCP on one port)
 
 Keyboard shortcuts match the original (Help → Keyboard Shortcuts).
 
+## AI Assistant
+
+Press **Ctrl/Cmd + I** (or the sparkle button in the toolbar) to open the in-editor assistant. Describe what you want and
+Claude builds it on your canvas using the same tools as the MCP server: it reads the graph, adds and wires nodes,
+validates the shader in the live preview, looks at a screenshot, and lays the graph out. Every run shows an
+**Applied changes · Undo** chip, and each step is also on the normal undo stack.
+
+- **Providers**: Anthropic (Claude), OpenAI and Google (Gemini), picked in **AI Setup**. Keys come from the server
+  environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or are pasted in AI Setup (stored in your
+  browser, sent only to the local server). `ant auth login` profiles also work for Anthropic.
+- **Models**: Claude defaults to **Claude Opus 5.5** (adaptive thinking, selectable effort, server-side refusal
+  fallback). OpenAI and Gemini models are listed live from the provider for your key; any model ID can be typed in.
+  OpenAI runs on Chat Completions (`reasoning_effort` for reasoning models); Gemini streams its thoughts into the panel.
+- A conversation is kept per project in the browser, in the provider's native message format; switching provider
+  starts a new conversation.
+- To exercise the loop without keys: `PORT=5199 npx tsx scripts/mock-ai.ts`, then start the server with
+  `ANTHROPIC_BASE_URL=http://127.0.0.1:5199 OPENAI_BASE_URL=http://127.0.0.1:5199/v1 GEMINI_BASE_URL=http://127.0.0.1:5199`
+  and dummy `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`.
+
 ## Agents (MCP)
 
 The dev server exposes MCP over Streamable HTTP at `http://localhost:5173/mcp`. When a project is open in a browser tab,
@@ -54,7 +73,9 @@ Tools: `list_projects`, `create_project`, `open_project`, `rename_project`, `lis
 src/core/      framework-free graph model, node registry, commands, TSL compiler, layout (shared with the server)
 src/runtime/   TSL evaluation scope + WebGPU preview renderer
 src/app/       Solid 2 UI (pages, editor, UI kit)
-server/        HTTP server: Vite middleware, REST API, editor bridge (WebSocket), MCP endpoint
+server/        HTTP server: Vite middleware, REST API, editor bridge (WebSocket), MCP endpoint, AI chat loop
+               (tools.ts is the single tool table shared by MCP and the chat; ai/ holds the chat loop
+               and one adapter per provider)
 tests/         vitest (compiler, templates, commands)
 ```
 

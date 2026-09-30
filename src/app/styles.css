@@ -186,6 +186,9 @@
 .md ol { list-style: decimal; padding-left: 1.2em; }
 .md code { font-family: var(--font-mono); background: rgba(127,127,127,0.2); border-radius: 3px; padding: 0 3px; font-size: 0.9em; }
 .md a { text-decoration: underline; }
+.md pre { font-family: var(--font-mono); font-size: 11px; background: rgba(127,127,127,0.15); border-radius: 6px; padding: 6px 8px; margin: 0.4em 0; overflow-x: auto; white-space: pre; }
+.md pre code { background: none; padding: 0; }
+.md strong { font-weight: 600; }
 
 /* codemirror container */
 .cm-editor { height: 100%; font-size: 12px; }

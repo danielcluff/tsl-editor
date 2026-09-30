@@ -46,6 +46,9 @@ export class PreviewRenderer {
   mesh!: THREE.Mesh;
   grid = new THREE.GridHelper(10, 20, 0x444444, 0x222222);
   backdrop?: THREE.Mesh;
+  ambient = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+  light = new THREE.DirectionalLight(0xffffff, 2);
+  lightHelper?: THREE.DirectionalLightHelper;
   pipeline?: THREE.RenderPipeline;
   settings!: PreviewSettings;
   materialResult?: MaterialResult;
@@ -94,10 +97,8 @@ export class PreviewRenderer {
     this.controls.enableDamping = true;
     this.controls.target.set(0, 0, 0);
 
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
-    const dir = new THREE.DirectionalLight(0xffffff, 2);
-    dir.position.set(3, 5, 4);
-    this.scene.add(dir);
+    // the directional light aims at its target, which stays at the origin (the object)
+    this.scene.add(this.ambient, this.light, this.light.target);
     this.grid.position.y = -1.2;
     this.scene.add(this.grid);
 
@@ -223,6 +224,7 @@ export class PreviewRenderer {
       prev.instanceCount !== s.instanceCount;
     if (geoChanged) this.rebuildMesh();
     this.grid.visible = s.showGrid;
+    this.applyLights(s);
     if (force || prev.environment !== s.environment || prev.showBackground !== s.showBackground) void this.loadEnv();
     this.scene.environmentIntensity = s.envIntensity;
     this.scene.backgroundIntensity = s.envIntensity;
@@ -234,6 +236,28 @@ export class PreviewRenderer {
       this.scene.add(this.backdrop);
     }
     if (this.backdrop) this.backdrop.visible = s.showBackdrop;
+  }
+
+  /** Directional light placed on a sphere around the object from azimuth/elevation. */
+  private applyLights(s: PreviewSettings) {
+    const radius = 7;
+    const az = THREE.MathUtils.degToRad(s.lightAzimuth);
+    const el = THREE.MathUtils.degToRad(s.lightElevation);
+    this.light.position.set(radius * Math.cos(el) * Math.sin(az), radius * Math.sin(el), radius * Math.cos(el) * Math.cos(az));
+    this.light.color.set(s.lightColor);
+    this.light.intensity = s.lightIntensity;
+    this.light.visible = s.lightEnabled;
+    this.ambient.intensity = s.ambientIntensity;
+    if (s.showLightHelper && s.lightEnabled) {
+      if (!this.lightHelper) {
+        this.lightHelper = new THREE.DirectionalLightHelper(this.light, 0.6);
+        this.scene.add(this.lightHelper);
+      }
+      this.lightHelper.visible = true;
+      this.lightHelper.update();
+    } else if (this.lightHelper) {
+      this.lightHelper.visible = false;
+    }
   }
 
   geometryError?: string;

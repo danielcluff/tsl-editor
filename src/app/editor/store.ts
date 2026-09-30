@@ -144,6 +144,16 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     restore(entry);
   }
 
+  /** Current undo depth; `undoTo(mark)` reverts everything done since. */
+  const historyMark = () => past.length;
+  function undoTo(mark: number) {
+    if (past.length <= mark) return;
+    const target = past[mark];
+    future.push(serialize());
+    past = past.slice(0, mark);
+    restore(target);
+  }
+
   function redo() {
     const entry = future.pop();
     if (!entry) return;
@@ -843,6 +853,8 @@ export function createEditor(initial: ProjectDoc, opts: { readonly?: boolean; pe
     // history
     undo,
     redo,
+    historyMark,
+    undoTo,
     pushHistory,
     mutate,
     save,

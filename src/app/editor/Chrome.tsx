@@ -24,6 +24,7 @@ import {
   Repeat,
   Scan,
   Share2,
+  Sparkles,
   Trash2,
   Undo2,
   Waypoints,
@@ -31,9 +32,10 @@ import {
 } from "lucide-static";
 import { getNodeDef } from "../../core/registry";
 import { A } from "../lib/router";
-import { Icon, MenuItem, MenuLabel, MenuSeparator, Popover, Tooltip } from "../ui";
+import { Icon, MenuItem, MenuLabel, MenuSeparator, Popover, Tooltip, togglePopover, type PopoverAnchor } from "../ui";
 import { Logo } from "../pages/shared";
 import { EditorContext } from "./store";
+import { ChatContext } from "./ai-chat";
 import { ui } from "./ui-state";
 import { SHORTCUTS } from "./shortcuts";
 
@@ -43,7 +45,7 @@ import { SHORTCUTS } from "./shortcuts";
 
 export function TopBar(props: { embed?: boolean; onSaveJson: () => void; onLoadJson: () => void }) {
   const ed = useContext(EditorContext);
-  const [menu, setMenu] = createSignal<DOMRect | null>(null);
+  const [menu, setMenu] = createSignal<PopoverAnchor | null>(null);
   const sg = createMemo(() =>
     ed.state.subgraph ? ed.state.doc.customNodes.find((s) => s.id === ed.state.subgraph!.subgraphId) : undefined,
   );
@@ -125,11 +127,11 @@ export function TopBar(props: { embed?: boolean; onSaveJson: () => void; onLoadJ
         title="More options"
         aria-label="More options"
         class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-        onClick={(e) => setMenu(e.currentTarget.getBoundingClientRect())}
+        onClick={(e) => togglePopover(menu(), setMenu, e)}
       >
         <Icon svg={Ellipsis} class="size-4" />
       </button>
-      <Popover open={!!menu()} anchor={menu() ?? undefined} align="end" onClose={() => setMenu(null)} class="w-56">
+      <Popover open={!!menu()} anchor={menu()?.rect} trigger={menu()?.el} align="end" onClose={() => setMenu(null)} class="w-56">
         <MenuLabel>File</MenuLabel>
         <MenuItem icon={Download} onSelect={() => (setMenu(null), props.onSaveJson())}>
           Save to JSON
@@ -207,6 +209,7 @@ function ToolButton(props: { icon: string; label: string; active?: boolean; disa
 
 export function Toolbar() {
   const ed = useContext(EditorContext);
+  const chat = useContext(ChatContext);
   const k = (name: keyof typeof SHORTCUTS) => SHORTCUTS[name].display;
   return (
     <div class="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border bg-card/95 p-1 shadow-lg backdrop-blur" data-ui>
@@ -234,6 +237,18 @@ export function Toolbar() {
       <ToolButton icon={Scan} label="Fit View" onClick={() => ed.fitView()} />
       <ToolButton icon={Image} label={`Open Image Export (${k("imageExport")})`} onClick={() => ui.openDialog("export")} />
       <ToolButton icon={Code} label={`View Code (${k("viewCode")})`} onClick={() => ui.openDialog("code")} />
+      <div class="mx-1 h-5 w-px bg-border" />
+      <ToolButton
+        icon={Sparkles}
+        label={`AI Assistant (${k("aiChat")})`}
+        active={chat.state.open && !chat.state.minimized}
+        onClick={() =>
+          chat.setState((d) => {
+            d.open = !(d.open && !d.minimized);
+            d.minimized = false;
+          })
+        }
+      />
     </div>
   );
 }

@@ -14,6 +14,8 @@ import { Sidebar } from "./Sidebar";
 import { connectBridge } from "./bridge-client";
 import { installShortcuts } from "./shortcuts";
 import { EditorContext, createEditor, loadLibrary } from "./store";
+import { AIChat } from "./AIChat";
+import { ChatContext, createChat } from "./ai-chat";
 import { ui } from "./ui-state";
 
 export default function EditorPage(props: { id: string }) {
@@ -64,7 +66,8 @@ export default function EditorPage(props: { id: string }) {
 
 function EditorShell(props: { doc: ProjectDoc; persist: boolean; embed: boolean }) {
   const ed = createEditor(untrack(() => props.doc), { persist: untrack(() => props.persist) });
-  if (import.meta.env.DEV) (window as unknown as { __tsl: unknown }).__tsl = { ed, ui };
+  const chat = createChat(ed);
+  if (import.meta.env.DEV) (window as unknown as { __tsl: unknown }).__tsl = { ed, ui, chat };
   ui.insertSubgraphById = (id, at) => {
     const def = ed.state.doc.customNodes.find((s) => s.id === id) ?? loadLibrary().find((s) => s.id === id);
     if (def) ed.insertSubgraph(def, at);
@@ -72,7 +75,12 @@ function EditorShell(props: { doc: ProjectDoc; persist: boolean; embed: boolean 
 
   onSettled(() => {
     ed.compileNow();
-    const offKeys = installShortcuts(ed);
+    const offKeys = installShortcuts(ed, () =>
+      chat.setState((d) => {
+        d.open = !(d.open && !d.minimized);
+        d.minimized = false;
+      }),
+    );
     const offBridge = untrack(() => props.persist) ? connectBridge(ed, { projectId: ed.state.doc.id }) : () => {};
     const beforeUnload = (e: BeforeUnloadEvent) => {
       if (ed.state.saveState === "unsaved" || ed.state.saveState === "saving") {
@@ -143,6 +151,7 @@ function EditorShell(props: { doc: ProjectDoc; persist: boolean; embed: boolean 
 
   return (
     <EditorContext value={ed}>
+      <ChatContext value={chat}>
       <div class="fixed inset-0 flex gap-2 bg-background p-2 text-foreground">
         <Sidebar />
         <div class="relative min-w-0 flex-1 overflow-hidden rounded-lg border">
@@ -150,6 +159,7 @@ function EditorShell(props: { doc: ProjectDoc; persist: boolean; embed: boolean 
           <TopBar embed={props.embed} onSaveJson={saveJson} onLoadJson={loadJson} />
           <Toolbar />
           <FindBar />
+          <AIChat />
         </div>
         <div class="flex w-[300px] shrink-0 flex-col gap-2">
           <PreviewPanel
@@ -166,6 +176,7 @@ function EditorShell(props: { doc: ProjectDoc; persist: boolean; embed: boolean 
       <ContextMenu />
       <Dialogs persist={props.persist} />
       <Toasts />
+      </ChatContext>
     </EditorContext>
   );
 }

@@ -3,6 +3,8 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { ProjectDoc } from "../src/core/types";
+import { credentialStatus, handleChat, handleModels, type ChatRequest } from "./ai/index";
+import { mcpStatus, recordMcpActivity } from "./mcp-activity";
 import { attachBridge, broadcast } from "./bridge";
 import { createMcpServer } from "./mcp";
 import { deleteProject, ensureStore, getProject, listProjects, newProject, saveProject } from "./store";
@@ -28,6 +30,16 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
   const parts = url.pathname.split("/").filter(Boolean); // ["api", "projects", id?]
   if (parts[0] !== "api") return false;
   try {
+    if (parts[1] === "mcp" && req.method === "GET" && parts[2] === "status") return json(res, 200, mcpStatus()), true;
+    if (parts[1] === "ai" && req.method === "GET" && parts[2] === "status") return json(res, 200, credentialStatus()), true;
+    if (parts[1] === "ai" && req.method === "POST" && parts[2] === "models") {
+      await handleModels(res, ((await readBody(req)) ?? {}) as Parameters<typeof handleModels>[1]);
+      return true;
+    }
+    if (parts[1] === "ai" && req.method === "POST" && parts[2] === "chat") {
+      await handleChat(res, (await readBody(req)) as ChatRequest);
+      return true;
+    }
     if (parts[1] === "projects" && parts.length === 2) {
       if (req.method === "GET") return json(res, 200, await listProjects()), true;
       if (req.method === "POST") {
@@ -74,7 +86,9 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<voi
     void server.close();
   });
   await server.connect(transport);
-  await transport.handleRequest(req, res, await readBody(req));
+  const body = await readBody(req);
+  recordMcpActivity(body);
+  await transport.handleRequest(req, res, body);
 }
 
 const MIME: Record<string, string> = {

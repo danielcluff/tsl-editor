@@ -20,7 +20,22 @@ export function renderMarkdown(src: string): string {
     if (list) out.push(`</${list}>`);
     list = null;
   };
+  let fence: string[] | null = null;
   for (const line of src.split("\n")) {
+    if (/^```/.test(line.trim())) {
+      if (fence) {
+        out.push(`<pre><code>${esc(fence.join("\n"))}</code></pre>`);
+        fence = null;
+      } else {
+        close();
+        fence = [];
+      }
+      continue;
+    }
+    if (fence) {
+      fence.push(line);
+      continue;
+    }
     const h = /^(#{1,3})\s+(.*)$/.exec(line);
     const ul = /^\s*[-*]\s+(.*)$/.exec(line);
     const ol = /^\s*\d+\.\s+(.*)$/.exec(line);
@@ -48,6 +63,7 @@ export function renderMarkdown(src: string): string {
       out.push(`<p>${inline(line)}</p>`);
     }
   }
+  if (fence) out.push(`<pre><code>${esc(fence.join("\n"))}</code></pre>`);
   close();
   return out.join("");
 }

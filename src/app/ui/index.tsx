@@ -152,6 +152,12 @@ export function Popover(
     open: boolean;
     onClose: () => void;
     anchor?: DOMRect;
+    /**
+     * Element that toggles this popover. Presses on it are not treated as
+     * "outside" clicks, so its own click handler can close the popover cleanly
+     * instead of the popover closing and the click reopening it.
+     */
+    trigger?: Element | null;
     side?: Side;
     align?: "start" | "center" | "end";
     class?: string;
@@ -163,7 +169,9 @@ export function Popover(
     (open) => {
       if (!open) return;
       const onDown = (e: PointerEvent) => {
-        if (el && !el.contains(e.target as Node)) props.onClose();
+        const target = e.target as Node;
+        if (props.trigger?.contains(target)) return;
+        if (el && !el.contains(target)) props.onClose();
       };
       const onKey = (e: KeyboardEvent) => {
         if (e.key === "Escape") props.onClose();
@@ -198,6 +206,18 @@ export function Popover(
       </Portal>
     </Show>
   );
+}
+
+/** Anchor state for a popover opened by a toggle button. */
+export interface PopoverAnchor {
+  rect: DOMRect;
+  el: HTMLElement;
+}
+
+/** Click handler for a popover toggle button: opens when closed, closes when open. */
+export function togglePopover(current: PopoverAnchor | null, set: (a: PopoverAnchor | null) => void, e: MouseEvent) {
+  const el = e.currentTarget as HTMLElement;
+  set(current?.el === el ? null : { rect: el.getBoundingClientRect(), el });
 }
 
 export function MenuItem(
@@ -435,7 +455,7 @@ export function NumberField(props: {
     <div class={["flex h-7 items-center overflow-hidden rounded-md border border-input bg-transparent text-xs dark:bg-input/30", props.class]}>
       <Show when={props.label}>
         <span
-          class="flex h-full cursor-ew-resize select-none items-center border-r border-input px-1.5 font-mono text-[10px] uppercase text-muted-foreground"
+          class="flex h-full shrink-0 cursor-ew-resize select-none items-center border-r border-input px-1.5 font-mono text-[10px] whitespace-nowrap uppercase text-muted-foreground"
           onPointerDown={startScrub}
         >
           {props.label}

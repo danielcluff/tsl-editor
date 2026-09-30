@@ -19,15 +19,15 @@ import { api } from "../lib/api";
 import { A, navigate } from "../lib/router";
 import { signOut, user } from "../lib/session";
 import { theme, toggleTheme } from "../lib/theme";
-import { Button, Dialog, Icon, Input, MenuItem, MenuSeparator, Popover } from "../ui";
+import { Button, Dialog, Icon, Input, MenuItem, MenuSeparator, Popover, togglePopover, type PopoverAnchor } from "../ui";
 import { Logo, timeAgo } from "./shared";
 
 export function Dashboard() {
   const [projects, setProjects] = createSignal<ProjectSummary[] | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [query, setQuery] = createSignal("");
-  const [menu, setMenu] = createSignal<{ id: string; rect: DOMRect } | null>(null);
-  const [userMenu, setUserMenu] = createSignal<DOMRect | null>(null);
+  const [menu, setMenu] = createSignal<(PopoverAnchor & { id: string }) | null>(null);
+  const [userMenu, setUserMenu] = createSignal<PopoverAnchor | null>(null);
   const [renaming, setRenaming] = createSignal<ProjectSummary | null>(null);
   const [renameText, setRenameText] = createSignal("");
   const [deleting, setDeleting] = createSignal<ProjectSummary | null>(null);
@@ -114,7 +114,7 @@ export function Dashboard() {
             <button
               type="button"
               class="flex size-8 items-center justify-center rounded-full bg-muted text-xs font-semibold"
-              onClick={(e) => setUserMenu(e.currentTarget.getBoundingClientRect())}
+              onClick={(e) => togglePopover(userMenu(), setUserMenu, e)}
               aria-label="Account"
             >
               {user()?.name.slice(0, 1) ?? "G"}
@@ -215,7 +215,7 @@ export function Dashboard() {
                         type="button"
                         aria-label="Project actions"
                         class="absolute right-2 bottom-3 flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                        onClick={(e) => setMenu({ id: p.id, rect: e.currentTarget.getBoundingClientRect() })}
+                        onClick={(e) => togglePopover(menu(), (a) => setMenu(a && { ...a, id: p.id }), e)}
                       >
                         <Icon svg={EllipsisVertical} class="size-4" />
                       </button>
@@ -228,7 +228,7 @@ export function Dashboard() {
         </section>
       </main>
 
-      <Popover open={!!menu()} anchor={menu()?.rect} align="end" onClose={() => setMenu(null)}>
+      <Popover open={!!menu()} anchor={menu()?.rect} trigger={menu()?.el} align="end" onClose={() => setMenu(null)}>
         <MenuItem
           icon={Pencil}
           onSelect={() => {
@@ -276,7 +276,7 @@ export function Dashboard() {
         </MenuItem>
       </Popover>
 
-      <Popover open={!!userMenu()} anchor={userMenu() ?? undefined} align="end" onClose={() => setUserMenu(null)}>
+      <Popover open={!!userMenu()} anchor={userMenu()?.rect} trigger={userMenu()?.el} align="end" onClose={() => setUserMenu(null)}>
         <div class="px-2 py-1.5 text-sm font-medium">{user()?.name ?? "Guest"}</div>
         <MenuSeparator />
         <MenuItem
@@ -399,9 +399,9 @@ export function McpDialog(props: { open: boolean; onClose: () => void }) {
 
 function CopyBlock(props: { text: string; copied: boolean; onCopy: () => void }) {
   return (
-    <div class="relative rounded-md border bg-muted/50">
-      <pre class="thin-scroll overflow-x-auto p-3 pr-16 font-mono text-xs whitespace-pre">{props.text}</pre>
-      <Button variant="ghost" size="xs" class="absolute top-2 right-2" onClick={props.onCopy}>
+    <div class="flex items-start gap-1 rounded-md border bg-muted/50">
+      <pre class="thin-scroll min-w-0 flex-1 overflow-x-auto p-3 font-mono text-xs whitespace-pre">{props.text}</pre>
+      <Button variant="ghost" size="xs" class="mt-2 mr-2 shrink-0" onClick={props.onCopy}>
         <Icon svg={Copy} class="size-3" /> {props.copied ? "Copied" : "Copy"}
       </Button>
     </div>

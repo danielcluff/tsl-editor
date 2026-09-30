@@ -42,7 +42,20 @@ export function defaultSettings(): PreviewSettings {
     instancing: false,
     instanceCount: 100,
     thumbnail: "auto",
+    // matches the original fixed light at (3, 5, 4)
+    lightEnabled: true,
+    lightIntensity: 2,
+    lightColor: "#ffffff",
+    lightAzimuth: 36.87,
+    lightElevation: 45,
+    showLightHelper: false,
+    ambientIntensity: 1.2,
   };
+}
+
+/** Settings with defaults filled in (projects saved before a field existed lack it). */
+export function resolveSettings(s: Partial<PreviewSettings> | undefined): PreviewSettings {
+  return { ...defaultSettings(), ...s };
 }
 
 export function emptyGraph(): Graph {

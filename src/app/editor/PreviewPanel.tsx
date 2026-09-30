@@ -1,8 +1,9 @@
 import { For, Show, createEffect, createSignal, onSettled, snapshot, useContext } from "solid-js";
 import { Camera, Maximize2, Minimize2, SlidersHorizontal } from "lucide-static";
 import type { GeometryKind, PreviewSettings } from "../../core/types";
+import { resolveSettings } from "../../core/graph";
 import { ENVIRONMENTS, PreviewRenderer } from "../../runtime/preview";
-import { Button, Dialog, Icon, NumberField, Popover, Select, Slider, Switch, Tooltip } from "../ui";
+import { Button, Dialog, Icon, NumberField, Popover, Select, Slider, Switch, Tooltip, togglePopover, type PopoverAnchor } from "../ui";
 import { CodeEditor } from "./CodeEditor";
 import { EditorContext } from "./store";
 import { ui } from "./ui-state";
@@ -69,14 +70,14 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
   const ed = useContext(EditorContext);
   let host!: HTMLDivElement;
   let preview: PreviewRenderer | undefined;
-  const [settingsAnchor, setSettingsAnchor] = createSignal<DOMRect | null>(null);
+  const [settingsAnchor, setSettingsAnchor] = createSignal<PopoverAnchor | null>(null);
   const [scriptOpen, setScriptOpen] = createSignal(false);
   const [ready, setReady] = createSignal(false);
   const [backend, setBackend] = createSignal("");
   const [initError, setInitError] = createSignal<string | null>(null);
 
   onSettled(() => {
-    preview = new PreviewRenderer(host, snapshot(ed.state.doc.settings) as PreviewSettings);
+    preview = new PreviewRenderer(host, resolveSettings(snapshot(ed.state.doc.settings) as PreviewSettings));
     preview.onError = (errs) => ed.setState((s) => void (s.runtimeErrors = errs));
     preview.ready
       .then(() => {
@@ -115,6 +116,21 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
     };
   });
 
+  // Escape leaves the expanded view
+  createEffect(
+    () => ui.previewExpanded(),
+    (expanded) => {
+      if (!expanded) return;
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key !== "Escape") return;
+        e.stopPropagation();
+        ui.setPreviewExpanded(false);
+      };
+      window.addEventListener("keydown", onKey, true);
+      return () => window.removeEventListener("keydown", onKey, true);
+    },
+  );
+
   // apply compiled graph
   createEffect(
     () => [ed.compiled(), ready(), ed.state.doc.settings.enablePost] as const,
@@ -130,7 +146,7 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
     () => JSON.stringify(ed.state.doc.settings),
     (json) => {
       if (!preview || !ready()) return;
-      preview.applySettings(JSON.parse(json));
+      preview.applySettings(resolveSettings(JSON.parse(json)));
     },
   );
 
@@ -177,8 +193,11 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
   return (
     <div
       class={[
-        "relative shrink-0 overflow-hidden rounded-lg border bg-card",
-        ui.previewExpanded() ? "fixed inset-2 z-40" : "h-[300px]",
+        "shrink-0 overflow-hidden rounded-lg border bg-card",
+        // one position class only: `relative` is emitted after `fixed` and would win
+        // expanded: fill everything left of the inspector column (300px wide + 8px gap + 8px padding),
+        // which then takes the full height on the right
+        ui.previewExpanded() ? "fixed top-2 bottom-2 left-2 right-[316px] z-40 shadow-2xl" : "relative h-[300px]",
       ]}
       data-ui
     >
@@ -218,7 +237,7 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
             type="button"
             aria-label="Preview settings"
             class="flex size-7 items-center justify-center rounded-md text-white/80 hover:bg-white/10 hover:text-white"
-            onClick={(e) => setSettingsAnchor(e.currentTarget.getBoundingClientRect())}
+            onClick={(e) => togglePopover(settingsAnchor(), setSettingsAnchor, e)}
           >
             <Icon svg={SlidersHorizontal} class="size-3.5" />
           </button>
@@ -233,7 +252,7 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
         </div>
       </Show>
 
-      <Popover open={!!settingsAnchor()} anchor={settingsAnchor() ?? undefined} align="end" onClose={() => setSettingsAnchor(null)} class="w-72 p-3">
+      <Popover open={!!settingsAnchor()} anchor={settingsAnchor()?.rect} trigger={settingsAnchor()?.el} align="end" onClose={() => setSettingsAnchor(null)} class="thin-scroll max-h-[80vh] w-72 overflow-y-auto p-3">
         <div class="mb-3 text-sm font-semibold">Preview Settings</div>
         <div class="flex flex-col gap-3 text-xs">
           <Row label="Geometry">
@@ -297,6 +316,7 @@ export function PreviewPanel(props: { onReady?: (p: PreviewRenderer) => void }) 
           <Toggle label="Show Grid" value={ed.state.doc.settings.showGrid} onChange={(v) => setSetting("showGrid", v)} />
           <Toggle label="Enable Post-Processing" value={ed.state.doc.settings.enablePost} onChange={(v) => setSetting("enablePost", v)} />
           <Toggle label="Show Backdrop" value={ed.state.doc.settings.showBackdrop} onChange={(v) => setSetting("showBackdrop", v)} />
+          <LightControls settings={resolveSettings(ed.state.doc.settings)} set={setSetting} />
           <Toggle label="Instancing" value={ed.state.doc.settings.instancing} onChange={(v) => setSetting("instancing", v)} />
           <Show when={ed.state.doc.settings.instancing}>
             <Row label="Instance Count">
@@ -376,5 +396,46 @@ function Toggle(props: { label: string; value: boolean; onChange: (v: boolean) =
       {props.label}
       <Switch checked={props.value} onChange={props.onChange} />
     </label>
+  );
+}
+
+function LightControls(props: {
+  settings: PreviewSettings;
+  set: <K extends keyof PreviewSettings>(key: K, value: PreviewSettings[K]) => void;
+}) {
+  const s = () => props.settings;
+  return (
+    <div class="-mx-3 flex flex-col gap-3 border-y px-3 py-3">
+      <div class="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">Light</div>
+      <Toggle label="Directional Light" value={s().lightEnabled} onChange={(v) => props.set("lightEnabled", v)} />
+      <Show when={s().lightEnabled}>
+        <Row label={`Intensity (${s().lightIntensity.toFixed(2)})`}>
+          <Slider value={s().lightIntensity} min={0} max={10} step={0.05} onChange={(v) => props.set("lightIntensity", v)} />
+        </Row>
+        <label class="flex items-center justify-between">
+          Color
+          <span class="flex items-center gap-2">
+            <span class="font-mono text-[10px] text-muted-foreground uppercase">{s().lightColor}</span>
+            <input
+              type="color"
+              aria-label="Light color"
+              class="h-6 w-8 cursor-pointer rounded border bg-transparent p-0"
+              value={s().lightColor}
+              onInput={(e) => props.set("lightColor", e.currentTarget.value)}
+            />
+          </span>
+        </label>
+        <Row label={`Azimuth (${Math.round(s().lightAzimuth)}°)`}>
+          <Slider value={s().lightAzimuth} min={-180} max={180} step={1} onChange={(v) => props.set("lightAzimuth", v)} />
+        </Row>
+        <Row label={`Elevation (${Math.round(s().lightElevation)}°)`}>
+          <Slider value={s().lightElevation} min={-90} max={90} step={1} onChange={(v) => props.set("lightElevation", v)} />
+        </Row>
+        <Toggle label="Show Light Helper" value={s().showLightHelper} onChange={(v) => props.set("showLightHelper", v)} />
+      </Show>
+      <Row label={`Ambient (${s().ambientIntensity.toFixed(2)})`}>
+        <Slider value={s().ambientIntensity} min={0} max={3} step={0.05} onChange={(v) => props.set("ambientIntensity", v)} />
+      </Row>
+    </div>
   );
 }

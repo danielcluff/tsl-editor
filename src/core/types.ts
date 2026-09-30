@@ -222,6 +222,17 @@ export interface PreviewSettings {
   instancing: boolean;
   instanceCount: number;
   thumbnail: "auto" | "manual";
+  /** Directional light aimed at the object. */
+  lightEnabled: boolean;
+  lightIntensity: number;
+  lightColor: string;
+  /** Degrees around the Y axis, 0 = in front of the object (+Z). */
+  lightAzimuth: number;
+  /** Degrees above the horizon. */
+  lightElevation: number;
+  showLightHelper: boolean;
+  /** Hemisphere (ambient) light. */
+  ambientIntensity: number;
 }
 
 export interface ProjectDoc {
