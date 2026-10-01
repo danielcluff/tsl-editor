@@ -1,37 +1,11 @@
 @import "tailwindcss";
-@import "@fontsource-variable/geist";
-@import "@fontsource-variable/geist-mono";
+/* the graph editor's styles (node colours, canvas, markdown, code editor, fonts) */
+@import "tsl-graph/editor.css";
 
-@custom-variant dark (&:where(.dark, .dark *));
+/* site pages use .dark on <html>; lib/theme.ts adds the editor's .tsl-dark alongside it */
+@custom-variant dark (&:where(.dark, .dark *, .tsl-dark, .tsl-dark *));
 
-@theme inline {
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-sidebar: var(--sidebar);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-}
-
+/* ---- site pages (landing, dashboard, docs): same tokens as the editor, on :root ---- */
 :root {
   --radius: 0.625rem;
   --background: #eee;
@@ -101,99 +75,6 @@
   }
 }
 
-/* ---- node header colours per category (light / dark) ---------------------- */
-.cat-math { background: var(--color-red-100); }
-.cat-constants { background: var(--color-violet-100); }
-.cat-geometry { background: var(--color-emerald-100); }
-.cat-material { background: var(--color-orange-100); }
-.cat-subgraph { background: var(--color-blue-100); }
-.cat-post { background: var(--color-teal-100); }
-.cat-texture { background: var(--color-pink-100); }
-.cat-model { background: var(--color-cyan-100); }
-.cat-advanced { background: var(--color-slate-100); }
-.cat-noise { background: var(--color-fuchsia-100); }
-.cat-utils { background: var(--color-yellow-100); }
-.cat-loop { background: var(--color-indigo-100); }
-.cat-globals { background: var(--color-emerald-100); }
-.cat-locals { background: var(--color-amber-100); }
-.cat-tsltextures { background: var(--color-rose-100); }
-.cat-default { background: var(--color-gray-100); }
-.dark .cat-math { background: color-mix(in oklab, var(--color-red-900) 20%, transparent); }
-.dark .cat-constants { background: color-mix(in oklab, var(--color-violet-900) 20%, transparent); }
-.dark .cat-geometry { background: color-mix(in oklab, var(--color-emerald-900) 20%, transparent); }
-.dark .cat-material { background: color-mix(in oklab, var(--color-orange-900) 20%, transparent); }
-.dark .cat-subgraph { background: color-mix(in oklab, var(--color-blue-900) 20%, transparent); }
-.dark .cat-post { background: color-mix(in oklab, var(--color-teal-900) 20%, transparent); }
-.dark .cat-texture { background: color-mix(in oklab, var(--color-pink-900) 20%, transparent); }
-.dark .cat-model { background: color-mix(in oklab, var(--color-cyan-900) 20%, transparent); }
-.dark .cat-advanced { background: color-mix(in oklab, var(--color-slate-900) 20%, transparent); }
-.dark .cat-noise { background: color-mix(in oklab, var(--color-fuchsia-900) 20%, transparent); }
-.dark .cat-utils { background: color-mix(in oklab, var(--color-yellow-900) 20%, transparent); }
-.dark .cat-loop { background: color-mix(in oklab, var(--color-indigo-900) 20%, transparent); }
-.dark .cat-globals { background: color-mix(in oklab, var(--color-emerald-900) 20%, transparent); }
-.dark .cat-locals { background: color-mix(in oklab, var(--color-amber-900) 20%, transparent); }
-.dark .cat-tsltextures { background: color-mix(in oklab, var(--color-rose-900) 20%, transparent); }
-.dark .cat-default { background: color-mix(in oklab, var(--color-gray-900) 20%, transparent); }
-
-/* ---- canvas --------------------------------------------------------------- */
-.graph-canvas {
-  background-color: var(--background);
-  background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px);
-}
-.graph-handle {
-  background-color: var(--handle-bg);
-  transition: background-color 150ms;
-}
-.graph-handle:hover,
-.graph-handle.is-connecting-target {
-  background-color: var(--handle-hover-bg);
-}
-.edge-path {
-  fill: none;
-  stroke-width: 2;
-}
-.edge-hit {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 14;
-  pointer-events: stroke;
-  cursor: pointer;
-}
-.edge-selected {
-  filter: drop-shadow(0 0 3px rgba(59, 130, 246, 0.9));
-}
-@keyframes edge-dash {
-  to {
-    stroke-dashoffset: -20;
-  }
-}
-.edge-animated {
-  stroke-dasharray: 6 4;
-  animation: edge-dash 0.6s linear infinite;
-}
-
-/* scrollbars */
-.thin-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(127, 127, 127, 0.3) transparent;
-}
-
-/* markdown in comments */
-.md h1 { font-size: 1.1em; font-weight: 700; margin: 0.2em 0; }
-.md h2 { font-size: 1em; font-weight: 700; margin: 0.2em 0; }
-.md h3 { font-size: 0.95em; font-weight: 600; margin: 0.2em 0; }
-.md p { margin: 0.25em 0; }
-.md ul { list-style: disc; padding-left: 1.2em; }
-.md ol { list-style: decimal; padding-left: 1.2em; }
-.md code { font-family: var(--font-mono); background: rgba(127,127,127,0.2); border-radius: 3px; padding: 0 3px; font-size: 0.9em; }
-.md a { text-decoration: underline; }
-.md pre { font-family: var(--font-mono); font-size: 11px; background: rgba(127,127,127,0.15); border-radius: 6px; padding: 6px 8px; margin: 0.4em 0; overflow-x: auto; white-space: pre; }
-.md pre code { background: none; padding: 0; }
-.md strong { font-weight: 600; }
-
-/* codemirror container */
-.cm-editor { height: 100%; font-size: 12px; }
-.cm-editor.cm-focused { outline: none; }
 
 /* sign-in background: two colour blooms with film grain dithering */
 .noise-bg {

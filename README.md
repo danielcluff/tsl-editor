@@ -6,10 +6,27 @@ shaders in your open editor.
 
 ## Run
 
+The graph editor, MCP server and AI chat live in [tsl-graph](https://github.com/danielcluff/tsl-graph), checked out as a
+git submodule at `packages/tsl-graph` and linked as a pnpm workspace package. This repo is the host app around it:
+landing, dashboard, node docs, project storage and AI keys.
+
 ```bash
+git clone --recurse-submodules https://github.com/danielcluff/tsl-editor.git   # or, in an existing clone:
+git submodule update --init
 pnpm install
 pnpm dev          # http://localhost:5173  (editor + API + MCP on one port)
 ```
+
+### Updating tsl-graph
+
+```bash
+pnpm graph:update   # pull the latest tsl-graph main into packages/tsl-graph, then pnpm install
+git add packages/tsl-graph && git commit -m "Update tsl-graph"
+```
+
+The submodule pins an exact tsl-graph commit, so this repo only moves when you commit a new pointer. To change graph
+code, edit `packages/tsl-graph` directly (a normal tsl-graph checkout on `main`): commit and push there, then commit the
+new pointer here. `pnpm test:graph` runs tsl-graph's tests.
 
 `pnpm build && pnpm start` serves the production build. Projects are stored as JSON in `./data/projects`
 (override with `TSL_DATA_DIR`).
@@ -36,14 +53,14 @@ validates the shader in the live preview, looks at a screenshot, and lays the gr
 **Applied changes · Undo** chip, and each step is also on the normal undo stack.
 
 - **Providers**: Anthropic (Claude), OpenAI and Google (Gemini), picked in **AI Setup**. Keys come from the server
-  environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or are pasted in AI Setup (stored in your
-  browser, sent only to the local server). `ant auth login` profiles also work for Anthropic.
+  environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or from **Dashboard → account menu → AI keys**
+  (stored in your browser, sent only to the local server; keys saved by older versions of AI Setup are picked up).
 - **Models**: Claude defaults to **Claude Opus 5.5** (adaptive thinking, selectable effort, server-side refusal
   fallback). OpenAI and Gemini models are listed live from the provider for your key; any model ID can be typed in.
   OpenAI runs on Chat Completions (`reasoning_effort` for reasoning models); Gemini streams its thoughts into the panel.
 - A conversation is kept per project in the browser, in the provider's native message format; switching provider
   starts a new conversation.
-- To exercise the loop without keys: `PORT=5199 npx tsx scripts/mock-ai.ts`, then start the server with
+- To exercise the loop without keys: `PORT=5199 npx tsx packages/tsl-graph/scripts/mock-ai.ts`, then start the server with
   `ANTHROPIC_BASE_URL=http://127.0.0.1:5199 OPENAI_BASE_URL=http://127.0.0.1:5199/v1 GEMINI_BASE_URL=http://127.0.0.1:5199`
   and dummy `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`.
 
@@ -65,18 +82,17 @@ Tools: `list_projects`, `create_project`, `open_project`, `rename_project`, `lis
 `$ref` names), `auto_layout`, `clear_graph`, `add_global`, `update_preview_settings`, `compile_graph`, `validate_graph`,
 `capture_preview`. Omit `projectId` to target the project currently open in the editor.
 
-`scripts/mcp-smoke.ts` drives a full agent session against a running editor.
+`URL=http://localhost:5173/mcp PREFIX= npx tsx packages/tsl-graph/scripts/mcp-smoke.ts` drives a full agent session against a running editor.
 
 ## Layout
 
 ```
-src/core/      framework-free graph model, node registry, commands, TSL compiler, layout (shared with the server)
-src/runtime/   TSL evaluation scope + WebGPU preview renderer
-src/app/       Solid 2 UI (pages, editor, UI kit)
-server/        HTTP server: Vite middleware, REST API, editor bridge (WebSocket), MCP endpoint, AI chat loop
-               (tools.ts is the single tool table shared by MCP and the chat; ai/ holds the chat loop
-               and one adapter per provider)
-tests/         vitest (compiler, templates, commands)
+src/app/              Solid 2 site: landing, sign-in, dashboard, node docs, and EditorPage (the tsl-graph host:
+                      projects via the REST API, routing, theme, AI keys)
+server/index.ts       HTTP server: Vite middleware, project REST API, and tsl-graph's graph server
+                      (MCP at /mcp, editor bridge at /bridge, AI chat at /ai/*)
+packages/tsl-graph/   submodule: graph model, compiler, editor UI, MCP tools, AI chat loop
+tests/                vitest (site code); graph tests live in tsl-graph (pnpm test:graph)
 ```
 
-The node catalog (`src/core/catalog.json`) mirrors the public node reference of the original site.
+The node catalog (`packages/tsl-graph/src/core/catalog.json`) mirrors the public node reference of the original site.

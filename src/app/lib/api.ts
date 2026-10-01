@@ -1,11 +1,9 @@
-import type { ProjectDoc, ProjectSummary } from "../../core/types";
-
-export const clientId = Math.random().toString(36).slice(2);
+import type { ProjectDoc, ProjectSummary } from "tsl-graph";
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
-    headers: { "content-type": "application/json", "x-client-id": clientId },
+    headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {

@@ -1,0 +1,4 @@
+[submodule "packages/tsl-graph"]
+	path = packages/tsl-graph
+	url = https://github.com/danielcluff/tsl-graph.git
+	branch = main

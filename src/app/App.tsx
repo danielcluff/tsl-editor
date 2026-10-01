@@ -5,7 +5,7 @@ import { SignIn } from "./pages/SignIn";
 import { Dashboard } from "./pages/Dashboard";
 import { DocsNodes, DocsNode } from "./pages/Docs";
 
-const EditorPage = lazy(() => import("./editor/EditorPage"));
+const EditorPage = lazy(() => import("./EditorPage"));
 
 export function App() {
   return (

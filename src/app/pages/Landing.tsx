@@ -2,7 +2,7 @@ import { For, Show, createSignal } from "solid-js";
 import { ArrowRight, ChevronDown, Maximize2, Minimize2, Moon, Sun } from "lucide-static";
 import { A } from "../lib/router";
 import { theme, toggleTheme } from "../lib/theme";
-import { Button, Icon } from "../ui";
+import { Button, Icon } from "tsl-graph/ui";
 import { Logo } from "./shared";
 
 const FEATURES: [string, string][] = [

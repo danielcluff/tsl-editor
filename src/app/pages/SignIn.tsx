@@ -1,6 +1,6 @@
 import { navigate, search } from "../lib/router";
 import { signInAsGuest } from "../lib/session";
-import { Button } from "../ui";
+import { Button } from "tsl-graph/ui";
 import { Logo } from "./shared";
 
 const GOOGLE = (

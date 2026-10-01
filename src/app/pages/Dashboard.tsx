@@ -4,6 +4,7 @@ import {
   Download,
   EllipsisVertical,
   FileUp,
+  KeyRound,
   LogOut,
   Moon,
   Pencil,
@@ -13,14 +14,14 @@ import {
   Sun,
   Trash2,
 } from "lucide-static";
-import type { ProjectDoc, ProjectSummary } from "../../core/types";
-import { TEMPLATES, projectFromTemplate } from "../../core/templates";
-import { importTslGraph, isTslGraphExport, summarizeImport } from "../../core/import-tslgraph";
+import { TEMPLATES, importTslGraph, isTslGraphExport, projectFromTemplate, summarizeImport, type ProjectDoc, type ProjectSummary } from "tsl-graph";
+import { PROVIDER_IDS, type ProviderId } from "tsl-graph";
+import { loadAiKeys, saveAiKeys } from "../lib/ai-keys";
 import { api } from "../lib/api";
 import { A, navigate } from "../lib/router";
 import { signOut, user } from "../lib/session";
 import { theme, toggleTheme } from "../lib/theme";
-import { Button, Dialog, Icon, Input, MenuItem, MenuSeparator, Popover, togglePopover, type PopoverAnchor } from "../ui";
+import { Button, Dialog, Icon, Input, MenuItem, MenuSeparator, Popover, togglePopover, type PopoverAnchor } from "tsl-graph/ui";
 import { Logo, timeAgo } from "./shared";
 
 export function Dashboard() {
@@ -33,6 +34,7 @@ export function Dashboard() {
   const [renameText, setRenameText] = createSignal("");
   const [deleting, setDeleting] = createSignal<ProjectSummary | null>(null);
   const [mcpOpen, setMcpOpen] = createSignal(false);
+  const [keysOpen, setKeysOpen] = createSignal(false);
 
   const refresh = async () => {
     try {
@@ -300,6 +302,15 @@ export function Dashboard() {
         <div class="px-2 py-1.5 text-sm font-medium">{user()?.name ?? "Guest"}</div>
         <MenuSeparator />
         <MenuItem
+          icon={KeyRound}
+          onSelect={() => {
+            setUserMenu(null);
+            setKeysOpen(true);
+          }}
+        >
+          AI keys
+        </MenuItem>
+        <MenuItem
           icon={LogOut}
           onSelect={() => {
             signOut();
@@ -361,7 +372,56 @@ export function Dashboard() {
       </Dialog>
 
       <McpDialog open={mcpOpen()} onClose={() => setMcpOpen(false)} />
+      <Show when={keysOpen()}>
+        <AiKeysDialog onClose={() => setKeysOpen(false)} />
+      </Show>
     </div>
+  );
+}
+
+const PROVIDER_LABELS: Record<ProviderId, string> = { anthropic: "Anthropic", openai: "OpenAI", google: "Google" };
+const KEY_HINT: Record<ProviderId, string> = { anthropic: "sk-ant-...", openai: "sk-...", google: "AIza..." };
+
+/** Keys for the editor's AI assistant, kept in this browser (the editor asks for them through its host). */
+function AiKeysDialog(props: { onClose: () => void }) {
+  const [keys, setKeys] = createSignal(loadAiKeys());
+  return (
+    <Dialog
+      open
+      onClose={props.onClose}
+      title="AI keys"
+      description="Used by the editor's AI assistant. Stored in this browser and sent only to this app's server. Keys set on the server (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY) work without this."
+    >
+      <form
+        class="flex flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          saveAiKeys(Object.fromEntries(Object.entries(keys()).filter(([, v]) => v?.trim())));
+          props.onClose();
+        }}
+      >
+        <For each={PROVIDER_IDS}>
+          {(p) => (
+            <label class="flex items-center gap-3 text-sm">
+              <span class="w-20 shrink-0">{PROVIDER_LABELS[p]}</span>
+              <Input
+                type="password"
+                autocomplete="off"
+                placeholder={KEY_HINT[p]}
+                value={keys()[p] ?? ""}
+                onInput={(e) => setKeys({ ...keys(), [p]: e.currentTarget.value.trim() })}
+              />
+            </label>
+          )}
+        </For>
+        <div class="flex justify-end gap-2">
+          <Button variant="outline" onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button type="submit">Save</Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 

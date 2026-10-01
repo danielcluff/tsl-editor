@@ -1,10 +1,8 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
-import { makeNode, resolvePorts } from "../../core/graph";
-import { CATEGORY_ORDER, allNodeDefs, getNodeDef } from "../../core/registry";
-import { createProject } from "../../core/graph";
+import { CATEGORY_ORDER, allNodeDefs, createProject, getNodeDef, makeNode, resolvePorts } from "tsl-graph";
 import { A } from "../lib/router";
-import { Input } from "../ui";
-import { NodeCard } from "../editor/NodeCard";
+import { Input } from "tsl-graph/ui";
+import { NodeCard } from "tsl-graph/editor";
 
 export const slugOf = (type: string) => type.replace(/\//g, "--");
 const typeOf = (slug: string) => slug.replace(/--/g, "/");

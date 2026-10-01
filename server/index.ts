@@ -1,18 +1,26 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { ProjectDoc } from "../src/core/types";
-import { credentialStatus, handleChat, handleModels, type ChatRequest } from "./ai/index";
-import { mcpStatus, recordMcpActivity } from "./mcp-activity";
-import { attachBridge, broadcast } from "./bridge";
-import { createMcpServer } from "./mcp";
-import { deleteProject, ensureStore, getProject, listProjects, newProject, saveProject } from "./store";
+import type { ProjectDoc } from "tsl-graph";
+import { createFileStore, createGraphServer, envApiKey } from "tsl-graph/server";
 
 const PORT = Number(process.env.PORT ?? 5173);
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PROD = process.env.NODE_ENV === "production";
 const ROOT = resolve(import.meta.dirname, "..");
+const DATA_DIR = resolve(process.env.TSL_DATA_DIR ?? join(process.cwd(), "data"));
+
+const store = createFileStore(join(DATA_DIR, "projects"));
+
+// MCP (/mcp), the editor bridge (/bridge) and the AI chat (/ai/*) come from tsl-graph.
+// basePath "" keeps the MCP endpoint at /mcp, where existing agent configs point.
+const graph = createGraphServer({
+  store,
+  basePath: "",
+  mcp: "graph",
+  projectUrl: (id) => `http://localhost:${PORT}/editor/${id}`,
+  ai: { getApiKey: envApiKey },
+});
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -26,43 +34,34 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
+/** Project REST API used by the dashboard and the editor host (src/app/lib/api.ts). */
 async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
   const parts = url.pathname.split("/").filter(Boolean); // ["api", "projects", id?]
   if (parts[0] !== "api") return false;
   try {
-    if (parts[1] === "mcp" && req.method === "GET" && parts[2] === "status") return json(res, 200, mcpStatus()), true;
-    if (parts[1] === "ai" && req.method === "GET" && parts[2] === "status") return json(res, 200, credentialStatus()), true;
-    if (parts[1] === "ai" && req.method === "POST" && parts[2] === "models") {
-      await handleModels(res, ((await readBody(req)) ?? {}) as Parameters<typeof handleModels>[1]);
-      return true;
-    }
-    if (parts[1] === "ai" && req.method === "POST" && parts[2] === "chat") {
-      await handleChat(res, (await readBody(req)) as ChatRequest);
-      return true;
-    }
     if (parts[1] === "projects" && parts.length === 2) {
-      if (req.method === "GET") return json(res, 200, await listProjects()), true;
+      if (req.method === "GET") return json(res, 200, await store.list()), true;
       if (req.method === "POST") {
         const body = ((await readBody(req)) ?? {}) as { name?: string; from?: Partial<ProjectDoc> };
-        return json(res, 201, await newProject(body.name, body.from)), true;
+        return json(res, 201, await store.create(body.name, body.from)), true;
       }
     }
     if (parts[1] === "projects" && parts.length === 3) {
       const id = parts[2];
       if (req.method === "GET") {
-        const doc = await getProject(id);
+        const doc = await store.get(id);
         return doc ? json(res, 200, doc) : json(res, 404, { error: "Not found" }), true;
       }
       if (req.method === "PUT") {
         const doc = (await readBody(req)) as ProjectDoc;
         if (!doc || doc.id !== id) return json(res, 400, { error: "Body id mismatch" }), true;
-        doc.updatedAt = Date.now();
-        await saveProject(doc);
-        broadcast(id, { type: "saved", projectId: id, updatedAt: doc.updatedAt }, req.headers["x-client-id"] as string);
+        await store.save(doc);
+        // other open tabs of this project reload it
+        graph.notifyProjectChanged(id);
         return json(res, 200, { ok: true, updatedAt: doc.updatedAt }), true;
       }
       if (req.method === "DELETE") {
-        await deleteProject(id);
+        await store.remove(id);
         return json(res, 200, { ok: true }), true;
       }
     }
@@ -71,24 +70,6 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     json(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }
   return true;
-}
-
-async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== "POST") {
-    res.writeHead(405, { allow: "POST" }).end();
-    return;
-  }
-  // Stateless: a fresh server/transport per request.
-  const server = createMcpServer();
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  res.on("close", () => {
-    void transport.close();
-    void server.close();
-  });
-  await server.connect(transport);
-  const body = await readBody(req);
-  recordMcpActivity(body);
-  await transport.handleRequest(req, res, body);
 }
 
 const MIME: Record<string, string> = {
@@ -117,9 +98,8 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, url: URL) 
 }
 
 async function main() {
-  await ensureStore();
   const server = createServer();
-  attachBridge(server);
+  graph.attach(server);
 
   let vite: import("vite").ViteDevServer | undefined;
   if (!PROD) {
@@ -133,7 +113,7 @@ async function main() {
 
   server.on("request", async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-    if (url.pathname === "/mcp") return void handleMcp(req, res).catch((e) => json(res, 500, { error: String(e) }));
+    if (await graph.handle(req, res)) return;
     if (await handleApi(req, res, url)) return;
     if (vite) vite.middlewares(req, res);
     else await serveStatic(req, res, url);

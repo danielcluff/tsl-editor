@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { setTheme as setGraphTheme } from "tsl-graph/ui";
 
 type Theme = "dark" | "light";
 
@@ -12,14 +13,23 @@ function initial(): Theme {
   return "dark";
 }
 
+/** .dark for the site's own styles, .tsl-dark for tsl-graph styles used outside the editor (docs node cards). */
+function applyClasses(t: Theme) {
+  document.documentElement.classList.toggle("dark", t === "dark");
+  document.documentElement.classList.toggle("tsl-dark", t === "dark");
+}
+
 const [theme, setThemeSignal] = createSignal<Theme>(initial());
-document.documentElement.classList.toggle("dark", theme() === "dark");
+applyClasses(theme());
+// dialogs and menus from tsl-graph/ui (used by the pages too) follow the site theme
+setGraphTheme(theme());
 
 export { theme };
 
 export function setTheme(t: Theme) {
   setThemeSignal(t);
-  document.documentElement.classList.toggle("dark", t === "dark");
+  setGraphTheme(t);
+  applyClasses(t);
   try {
     localStorage.setItem("tsl-theme", t);
   } catch {
