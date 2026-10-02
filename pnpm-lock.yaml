@@ -90,6 +90,9 @@ importers:
       openai:
         specifier: ^7.23.0
         version: 7.23.0(ws@8.22.0)(zod@4.6.5)
+      solid-graph:
+        specifier: workspace:*
+        version: link:packages/solid-graph
       tsl-easings:
         specifier: ^0.0.1
         version: 0.0.1
@@ -121,6 +124,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+      playwright-core:
+        specifier: ^1.63.0
+        version: 1.63.0
       solid-js:
         specifier: 2.0.0-rc.11
         version: 2.0.0-rc.11
@@ -133,6 +139,36 @@ importers:
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vite:
+        specifier: ^8.3.1
+        version: 8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
+      vitest:
+        specifier: ^5.0.2
+        version: 5.0.2(@types/node@26.6.3)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
+  packages/tsl-graph/packages/solid-graph:
+    devDependencies:
+      '@solidjs/vite-plugin':
+        specifier: 3.0.0-next.35
+        version: 3.0.0-next.35(@solidjs/web@2.0.0-rc.11(solid-js@2.0.0-rc.11))(solid-js@2.0.0-rc.11)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+      '@solidjs/web':
+        specifier: 2.0.0-rc.11
+        version: 2.0.0-rc.11(solid-js@2.0.0-rc.11)
+      '@tailwindcss/vite':
+        specifier: ^4.3.3
+        version: 4.3.3(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+      '@types/node':
+        specifier: ^26.6.3
+        version: 26.6.3
+      solid-js:
+        specifier: 2.0.0-rc.11
+        version: 2.0.0-rc.11
+      tailwindcss:
+        specifier: ^4.3.3
+        version: 4.3.3
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -1647,6 +1683,11 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
+
+  playwright-core@1.63.0:
+    resolution: {integrity: sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   postcss@8.5.28:
     resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
@@ -3270,6 +3311,8 @@ snapshots:
   picomatch@4.0.7: {}
 
   pkce-challenge@5.0.1: {}
+
+  playwright-core@1.63.0: {}
 
   postcss@8.5.28:
     dependencies:

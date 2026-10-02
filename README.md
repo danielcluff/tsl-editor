@@ -7,12 +7,14 @@ shaders in your open editor.
 ## Run
 
 The graph editor, MCP server and AI chat live in [tsl-graph](https://github.com/danielcluff/tsl-graph), checked out as a
-git submodule at `packages/tsl-graph` and linked as a pnpm workspace package. This repo is the host app around it:
-landing, dashboard, node docs, project storage and AI keys.
+git submodule at `packages/tsl-graph` and linked as a pnpm workspace package. tsl-graph has a submodule of its own:
+its canvas, [solid-graph](https://github.com/danielcluff/solid-graph), at `packages/tsl-graph/packages/solid-graph`
+(also a workspace package here). This repo is the host app around it: landing, dashboard, node docs, project storage
+and AI keys.
 
 ```bash
 git clone --recurse-submodules https://github.com/danielcluff/tsl-editor.git   # or, in an existing clone:
-git submodule update --init
+git submodule update --init --recursive
 pnpm install
 pnpm dev          # http://localhost:5173  (editor + API + MCP on one port)
 ```
@@ -20,13 +22,16 @@ pnpm dev          # http://localhost:5173  (editor + API + MCP on one port)
 ### Updating tsl-graph
 
 ```bash
-pnpm graph:update   # pull the latest tsl-graph main into packages/tsl-graph, then pnpm install
+pnpm graph:update   # pull the latest tsl-graph main into packages/tsl-graph, check out the solid-graph
+                    # commit it pins, then pnpm install
 git add packages/tsl-graph && git commit -m "Update tsl-graph"
 ```
 
 The submodule pins an exact tsl-graph commit, so this repo only moves when you commit a new pointer. To change graph
 code, edit `packages/tsl-graph` directly (a normal tsl-graph checkout on `main`): commit and push there, then commit the
-new pointer here. `pnpm test:graph` runs tsl-graph's tests.
+new pointer here. `pnpm test:graph` runs tsl-graph's tests. After pulling a commit here that moved the pointer, run
+`git submodule update --init --recursive && pnpm install`. To update the canvas itself, see "Updating solid-graph" in
+tsl-graph's README.
 
 `pnpm build && pnpm start` serves the production build. Projects are stored as JSON in `./data/projects`
 (override with `TSL_DATA_DIR`).
@@ -92,6 +97,7 @@ src/app/              Solid 2 site: landing, sign-in, dashboard, node docs, and 
 server/index.ts       HTTP server: Vite middleware, project REST API, and tsl-graph's graph server
                       (MCP at /mcp, editor bridge at /bridge, AI chat at /ai/*)
 packages/tsl-graph/   submodule: graph model, compiler, editor UI, MCP tools, AI chat loop
+                      (its canvas, solid-graph, is its own submodule in packages/tsl-graph/packages/solid-graph)
 tests/                vitest (site code); graph tests live in tsl-graph (pnpm test:graph)
 ```
 

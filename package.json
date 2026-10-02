@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:graph": "pnpm --dir packages/tsl-graph test",
-    "graph:update": "git submodule update --remote --merge packages/tsl-graph && pnpm install",
+    "graph:update": "git submodule update --remote --merge packages/tsl-graph && git -C packages/tsl-graph submodule update --init && pnpm install",
     "mcp:stdio": "TSL_GRAPH_URL=${TSL_GRAPH_URL:-http://localhost:${PORT:-5173}/mcp} tsl-graph-mcp"
   },
   "dependencies": {

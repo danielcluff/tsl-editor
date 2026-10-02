@@ -1,5 +1,7 @@
 packages:
   - packages/*
+  # tsl-graph's own submodule (solid-graph, the canvas)
+  - packages/tsl-graph/packages/*
 allowBuilds:
   '@google/genai': false
   esbuild: true
