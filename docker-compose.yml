@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  tsl-editor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${DOCKER_IMAGE_REPO}/${DOCKER_IMAGE_NAME:-tsl-editor}:${DOCKER_IMAGE_VERSION:-0.1.0}
+    container_name: tsl-editor
+    ports:
+      - "${PORT:-5173}:5173"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
