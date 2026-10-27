@@ -36,6 +36,29 @@ tsl-graph's README.
 `pnpm build && pnpm start` serves the production build. Projects are stored as JSON in `./data/projects`
 (override with `TSL_DATA_DIR`).
 
+## Docker
+
+Build and run the production image:
+
+```bash
+./scripts/docker-build.sh [--push]
+```
+
+Or via compose:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+The image name and version come from `.env` (or fall back to `package.json`):
+
+- `DOCKER_IMAGE_NAME` — image name (default: `package.json` `name`)
+- `DOCKER_IMAGE_VERSION` — image tag (default: `package.json` `version`)
+- `DOCKER_IMAGE_REPO` — registry prefix (default: `package.json` `dockerRepository`)
+
+Resulting tags: `<repo>/<name>:<version>` and `<repo>/<name>:latest`. Pass `--push` to push both.
+
 ## Features
 
 - **Landing, sign-in (guest), dashboard, node docs** (`/docs/nodes`) with templates, search, rename/duplicate/import/export.
