@@ -35,6 +35,7 @@ tsl-graph's README.
 
 `pnpm build && pnpm start` serves the production build. Projects are stored as JSON in `./data/projects`
 (override with `TSL_DATA_DIR`).
+
 ## Docker
 
 Build and run the production image:
